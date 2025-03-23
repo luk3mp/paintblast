@@ -305,7 +305,7 @@ const HUD = memo(
           !isReplenishing &&
           !isReloading && (
             <div className={styles.replenishPrompt}>
-              HOLD R TO REPLENISH CANISTERS
+              TAP R TO REPLENISH CANISTERS
             </div>
           )}
 

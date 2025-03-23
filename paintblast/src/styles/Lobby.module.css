@@ -1,0 +1,95 @@
+.lobby {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)),
+    url("/images/background-camo.webp");
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+.container {
+  background-color: rgba(40, 40, 40, 0.9);
+  padding: 2rem;
+  border-radius: 10px;
+  text-align: center;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  border: 2px solid #4a5;
+}
+
+.title {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+  color: #4a5;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.subtitle {
+  font-size: 1.5rem;
+  margin-bottom: 2rem;
+  color: #fff;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.input {
+  padding: 0.8rem;
+  font-size: 1rem;
+  border: 2px solid #4a5;
+  border-radius: 5px;
+  background-color: #222;
+  color: #fff;
+  font-family: inherit;
+}
+
+.input::placeholder {
+  color: #aaa;
+}
+
+.button {
+  padding: 1rem;
+  font-size: 1.2rem;
+  background-color: #4a5;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+  font-family: inherit;
+}
+
+.button:hover {
+  background-color: #5b6;
+}
+
+.error {
+  color: #ff5555;
+  margin: 0;
+}
+
+.info {
+  text-align: left;
+  border-top: 1px solid #555;
+  padding-top: 1rem;
+  color: #ddd;
+}
+
+.info h3 {
+  margin-top: 0;
+  color: #4a5;
+}
+
+.info ul {
+  padding-left: 1.5rem;
+}

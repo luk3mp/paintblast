@@ -1,0 +1,155 @@
+.menuContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+  color: white;
+  width: 90%;
+  max-width: 500px;
+  margin: 0 auto;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+}
+
+/* Add a fullscreen background */
+:global(.app-container) {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background-image: url("/paintball-bg.jpg");
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* If no background image is available, use a gradient */
+:global(.app-container::before) {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  z-index: -1;
+}
+
+:global(.main) {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.title {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+  color: #ff6b6b;
+  text-shadow: 0 0 10px rgba(255, 107, 107, 0.7);
+}
+
+.subtitle {
+  font-size: 1.5rem;
+  margin-bottom: 2rem;
+  color: #5eead4;
+}
+
+.playerInfo {
+  width: 100%;
+  margin-bottom: 1.5rem;
+}
+
+.nameInput {
+  width: 100%;
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+  border: 2px solid #5eead4;
+  background-color: rgba(30, 30, 30, 0.7);
+  color: white;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.gameOptions {
+  width: 100%;
+  margin-bottom: 2rem;
+}
+
+.optionRow {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.toggleInput {
+  margin: 0 0.75rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: #5eead4;
+}
+
+.toggleLabel {
+  color: #5eead4;
+  font-weight: bold;
+}
+
+.startButton {
+  padding: 0.75rem 2.5rem;
+  background-color: #ff6b6b;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1.25rem;
+  font-weight: bold;
+  cursor: pointer;
+  margin-bottom: 1.5rem;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.startButton:hover {
+  background-color: #ff8585;
+  transform: translateY(-2px);
+}
+
+.startButton:active {
+  transform: translateY(0);
+  background-color: #e05656;
+}
+
+.gameInfo {
+  width: 100%;
+  text-align: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  padding-top: 1rem;
+}
+
+.gameInfo p {
+  margin: 0.5rem 0;
+}
+
+.gameInfo small {
+  color: #cccccc;
+}
+
+@media (max-width: 600px) {
+  .menuContainer {
+    width: 95%;
+    padding: 1.5rem;
+  }
+
+  .title {
+    font-size: 2.2rem;
+  }
+
+  .subtitle {
+    font-size: 1.2rem;
+  }
+}

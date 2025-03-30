@@ -10,8 +10,15 @@ import {
   MAX_PLAYERS,
   QUEUE_REFRESH_INTERVAL,
   SERVER_STATUS_REFRESH_RATE,
+  POSITION_UPDATE_INTERVAL,
+  POSITION_UPDATE_THRESHOLD,
+  ROTATION_UPDATE_THRESHOLD,
+  BATCH_UPDATES,
+  BATCH_UPDATE_INTERVAL,
+  COMPRESSION_ENABLED,
 } from "./config";
 import { EVENTS, emitEvent } from "./events";
+import { trackNetworkTraffic } from "./performance";
 
 // Socket instance
 let socket = null;
@@ -28,6 +35,27 @@ let serverStatus = {
 // Event listeners
 const listeners = {};
 const mockEmitHandlers = {};
+
+// Position update batching
+let batchedUpdates = {
+  position: null,
+  rotation: null,
+  lastSentPosition: null,
+  lastSentRotation: null,
+  lastUpdateTime: 0,
+};
+
+// Create a throttle function to limit update frequency
+const throttle = (func, delay) => {
+  let lastCall = 0;
+  return function (...args) {
+    const now = Date.now();
+    if (now - lastCall >= delay) {
+      lastCall = now;
+      return func(...args);
+    }
+  };
+};
 
 /**
  * Connect to the Socket.IO server or initialize mock socket for single-player
@@ -66,16 +94,32 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
   emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
 
   try {
-    socket = io(url, {
+    const socketOptions = {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       timeout: 10000,
-    });
+    };
+
+    // Add compression if enabled
+    if (COMPRESSION_ENABLED) {
+      socketOptions.perMessageDeflate = {
+        threshold: 1024, // Only compress messages larger than 1KB
+        zlibDeflateOptions: {
+          level: 6, // Compression level (0-9), higher = more compression but slower
+          memLevel: 7, // Memory level (1-9), higher = more memory used but faster
+        },
+      };
+    }
+
+    socket = io(url, socketOptions);
 
     // Setup connection event handlers
     socket.on("connect", () => {
       console.log("✅ Connected to server");
       connectionState = "connected";
+
+      // Reset batched updates
+      resetBatchedUpdates();
 
       // Emit connection state change event
       emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
@@ -101,11 +145,11 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
     });
 
     // Setup queue event handlers
-    socket.on("queuePosition", (data) => {
+    socket.on("queueUpdate", (data) => {
       console.log(`Queue position update: ${data.position}`);
       queuePosition = data.position;
 
-      if (data.canJoin) {
+      if (data.position === 0) {
         console.log("👍 Your turn to join the game!");
         connectionState = "connected";
 
@@ -131,12 +175,20 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
     // Setup server status event handlers
     socket.on("serverStatus", (status) => {
       console.log("Server status update:", status);
-      serverStatus = {
-        currentPlayers: status.current_players,
-        maxPlayers: status.max_players,
-        queueLength: status.queue_length,
-        hasSpace: status.has_space,
-      };
+
+      // Convert legacy format if needed
+      if (status.current_players !== undefined) {
+        serverStatus = {
+          currentPlayers: status.current_players,
+          maxPlayers: status.max_players,
+          queueLength: status.queue_length,
+          hasSpace: status.has_space,
+          redTeamPlayers: status.redTeamPlayers || 0,
+          blueTeamPlayers: status.blueTeamPlayers || 0,
+        };
+      } else {
+        serverStatus = status;
+      }
 
       // Notify listeners of server status update
       emitEvent(EVENTS.SERVER_STATUS_UPDATE, serverStatus);
@@ -167,6 +219,21 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
       emitEvent(EVENTS.GAME_END, data);
     });
 
+    // Track received data for performance monitoring
+    socket.on("players", (playersData) => {
+      // Approximate size calculation of the data
+      const dataSize = JSON.stringify(playersData).length;
+      trackNetworkTraffic(dataSize, "received");
+
+      // Process the received data (filtered in Game component)
+      triggerMockEvent("players", playersData);
+    });
+
+    // Set up batch update processing if enabled
+    if (BATCH_UPDATES) {
+      setInterval(processBatchedUpdates, BATCH_UPDATE_INTERVAL);
+    }
+
     // Set up a timer to regularly request server status updates
     if (multiplayer) {
       setInterval(() => {
@@ -183,6 +250,111 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
     return null;
   }
 };
+
+/**
+ * Reset batched updates tracker
+ */
+function resetBatchedUpdates() {
+  batchedUpdates = {
+    position: null,
+    rotation: null,
+    lastSentPosition: null,
+    lastSentRotation: null,
+    lastUpdateTime: 0,
+  };
+}
+
+/**
+ * Process batched position/rotation updates
+ */
+function processBatchedUpdates() {
+  if (!socket || !socket.connected || !BATCH_UPDATES) return;
+
+  const now = Date.now();
+  if (now - batchedUpdates.lastUpdateTime < BATCH_UPDATE_INTERVAL) return;
+
+  if (batchedUpdates.position || batchedUpdates.rotation) {
+    const updateData = {};
+
+    // Only send position if it changed significantly
+    if (
+      batchedUpdates.position &&
+      (!batchedUpdates.lastSentPosition ||
+        positionChangedSignificantly(
+          batchedUpdates.position,
+          batchedUpdates.lastSentPosition
+        ))
+    ) {
+      updateData.position = batchedUpdates.position;
+      batchedUpdates.lastSentPosition = [...batchedUpdates.position];
+    }
+
+    // Only send rotation if it changed significantly
+    if (
+      batchedUpdates.rotation &&
+      (!batchedUpdates.lastSentRotation ||
+        rotationChangedSignificantly(
+          batchedUpdates.rotation,
+          batchedUpdates.lastSentRotation
+        ))
+    ) {
+      updateData.rotation = batchedUpdates.rotation;
+      batchedUpdates.lastSentRotation = [...batchedUpdates.rotation];
+    }
+
+    // Only emit if we have data to send
+    if (Object.keys(updateData).length > 0) {
+      // Track outgoing data size
+      const dataSize = JSON.stringify(updateData).length;
+      trackNetworkTraffic(dataSize, "sent");
+
+      // Send the update
+      socket.emit("updatePosition", updateData);
+      batchedUpdates.lastUpdateTime = now;
+    }
+  }
+}
+
+/**
+ * Check if position changed significantly enough to send an update
+ * @param {Array} newPos - New position
+ * @param {Array} prevPos - Previous position
+ * @returns {boolean} - Whether the change is significant
+ */
+function positionChangedSignificantly(newPos, prevPos) {
+  if (!prevPos) return true;
+
+  const dx = newPos[0] - prevPos[0];
+  const dy = newPos[1] - prevPos[1];
+  const dz = newPos[2] - prevPos[2];
+
+  // Calculate distance squared (faster than using Math.sqrt)
+  const distanceSquared = dx * dx + dy * dy + dz * dz;
+
+  return (
+    distanceSquared > POSITION_UPDATE_THRESHOLD * POSITION_UPDATE_THRESHOLD
+  );
+}
+
+/**
+ * Check if rotation changed significantly enough to send an update
+ * @param {Array} newRot - New rotation
+ * @param {Array} prevRot - Previous rotation
+ * @returns {boolean} - Whether the change is significant
+ */
+function rotationChangedSignificantly(newRot, prevRot) {
+  if (!prevRot) return true;
+
+  const dx = Math.abs(newRot[0] - prevRot[0]);
+  const dy = Math.abs(newRot[1] - prevRot[1]);
+  const dz = Math.abs(newRot[2] - prevRot[2]);
+
+  return (
+    dx > ROTATION_UPDATE_THRESHOLD ||
+    dy > ROTATION_UPDATE_THRESHOLD ||
+    dz > ROTATION_UPDATE_THRESHOLD
+  );
+}
 
 /**
  * Get the current socket instance
@@ -237,6 +409,60 @@ export const disconnectSocket = () => {
 };
 
 /**
+ * Send a player position update with optimization
+ * If batching is enabled, this will queue the update
+ * @param {Array} position - Player position
+ * @param {Array} rotation - Player rotation
+ */
+export const sendPositionUpdate = (position, rotation) => {
+  if (!socket || !isMultiplayerMode) return;
+
+  if (BATCH_UPDATES) {
+    // Store latest values for the next batch
+    batchedUpdates.position = position;
+    batchedUpdates.rotation = rotation;
+  } else {
+    // Create throttled function for direct updates
+    if (!sendPositionUpdate.throttled) {
+      sendPositionUpdate.throttled = throttle((pos, rot) => {
+        const updateData = {};
+
+        // Only include what has changed significantly
+        if (
+          pos &&
+          (!batchedUpdates.lastSentPosition ||
+            positionChangedSignificantly(pos, batchedUpdates.lastSentPosition))
+        ) {
+          updateData.position = pos;
+          batchedUpdates.lastSentPosition = [...pos];
+        }
+
+        if (
+          rot &&
+          (!batchedUpdates.lastSentRotation ||
+            rotationChangedSignificantly(rot, batchedUpdates.lastSentRotation))
+        ) {
+          updateData.rotation = rot;
+          batchedUpdates.lastSentRotation = [...rot];
+        }
+
+        // Only send if there are changes
+        if (Object.keys(updateData).length > 0) {
+          // Track outgoing data size
+          const dataSize = JSON.stringify(updateData).length;
+          trackNetworkTraffic(dataSize, "sent");
+
+          socket.emit("updatePosition", updateData);
+        }
+      }, POSITION_UPDATE_INTERVAL);
+    }
+
+    // Call the throttled function
+    sendPositionUpdate.throttled(position, rotation);
+  }
+};
+
+/**
  * Register a mock emit handler for single-player mode
  * This allows simulating server responses in single-player
  *
@@ -277,23 +503,25 @@ function createMockSocket() {
       if (event === "requestServerStatus") {
         setTimeout(() => {
           const mockStatus = {
-            current_players: 1, // Just you in single player
-            max_players: MAX_PLAYERS,
-            queue_length: 0,
-            has_space: true,
+            currentPlayers: 1, // Just you in single player
+            maxPlayers: MAX_PLAYERS,
+            queueLength: 0,
+            hasSpace: true,
+            redTeamPlayers: 1,
+            blueTeamPlayers: 0,
           };
 
           // Update local status
-          serverStatus = {
-            currentPlayers: mockStatus.current_players,
-            maxPlayers: mockStatus.max_players,
-            queueLength: mockStatus.queue_length,
-            hasSpace: mockStatus.has_space,
-          };
+          serverStatus = mockStatus;
 
           // Notify listeners
-          triggerMockEvent("serverStatusUpdate", serverStatus);
+          emitEvent(EVENTS.SERVER_STATUS_UPDATE, serverStatus);
         }, 100);
+      }
+
+      // Track mock data for consistency
+      if (event === "updatePosition" || event === "shoot") {
+        trackNetworkTraffic(JSON.stringify(data).length, "sent");
       }
     },
 
@@ -332,6 +560,9 @@ function createMockSocket() {
  */
 export const triggerMockEvent = (event, data) => {
   if (!listeners[event]) return;
+
+  // Mock receiving data for consistency
+  trackNetworkTraffic(JSON.stringify(data).length, "received");
 
   listeners[event].forEach((callback) => {
     callback(data);

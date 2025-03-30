@@ -18,6 +18,20 @@ import {
   getAverageFPS,
 } from "../game/performanceSettings";
 import { EVENTS, addEventListener } from "../lib/events";
+import PerformanceStats from "./PerformanceStats";
+import {
+  updateFps,
+  getCurrentSettings,
+  getPlayersToRender,
+  shouldRenderPlayer,
+} from "../lib/performance";
+import { SHOW_PERFORMANCE_STATS, PLAYER_RENDER_DISTANCE } from "../lib/config";
+import {
+  sendPositionUpdate,
+  getConnectionState,
+  getSocket,
+  connectSocket,
+} from "../lib/socket";
 
 export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
   const [socket, setSocket] = useState(null);
@@ -387,10 +401,8 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
 
   const updatePlayerPosition = (position, rotation) => {
     if (socket && isMultiplayer) {
-      socket.emit("updatePosition", {
-        position,
-        rotation,
-      });
+      // Use the optimized position update function
+      sendPositionUpdate(position, rotation);
     }
   };
 
@@ -902,6 +914,14 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           depth: true,
           powerPreference: "high-performance",
         }}
+        onCreated={({ gl }) => {
+          gl.setClearColor("#87CEEB"); // Set sky color for better performance than Sky component
+        }}
+        frameloop="demand" // Only render when needed for better performance
+        onBeforeRender={() => {
+          // Update FPS tracking on each frame
+          updateFps();
+        }}
       >
         <Physics gravity={[0, -9.81, 0]} interpolate={false} timeStep={1 / 60}>
           {process.env.NODE_ENV === "development" && <PhysicsDebug />}
@@ -957,18 +977,26 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
             debugMode={process.env.NODE_ENV === "development"}
           />
 
-          {Object.entries(players)
-            .filter(([id]) => id !== socket?.id)
-            .map(([id, player]) => (
-              <Player
-                key={id}
-                isLocalPlayer={false}
-                position={player.position}
-                rotation={player.rotation}
-                name={player.name}
-                team={player.team}
-              />
-            ))}
+          {/* Filter players based on distance and performance settings */}
+          {playerRef.current &&
+            Object.entries(
+              getPlayersToRender(
+                players,
+                playerRef.current.position || [0, 0, 0]
+              )
+            )
+              .filter(([id]) => id !== socket?.id)
+              .map(([id, player]) => (
+                <Player
+                  key={id}
+                  isLocalPlayer={false}
+                  position={player.position}
+                  rotation={player.rotation}
+                  name={player.name}
+                  team={player.team}
+                  useLowDetail={player.useLowDetail}
+                />
+              ))}
 
           {paintballs.map((paintball) => (
             <Paintball
@@ -1001,6 +1029,9 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
       )}
 
       <Chat messages={messages} onSendMessage={sendMessage} />
+
+      {/* Performance statistics overlay */}
+      <PerformanceStats visible={SHOW_PERFORMANCE_STATS} />
 
       {process.env.NODE_ENV === "development" && (
         <div className={styles.debugOverlay}>

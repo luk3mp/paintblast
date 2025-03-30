@@ -1,5 +1,7 @@
-import React, { memo, useMemo } from "react";
+import React, { memo, useMemo, useState, useEffect } from "react";
 import styles from "../styles/HUD.module.css";
+import { getServerStatus } from "../lib/socket";
+import { getFPS, getPerformanceLevel } from "../lib/performance";
 
 // Memoize the health display to prevent re-renders when other states change
 const HealthDisplay = memo(({ health }) => {
@@ -207,6 +209,35 @@ const HUD = memo(
     performanceInfo = null,
     showPerformance = false,
   }) => {
+    const [isChatting, setIsChatting] = useState(false);
+    const [serverStatus, setServerStatus] = useState(getServerStatus());
+    const [fps, setFps] = useState(60);
+    const [showExtendedStats, setShowExtendedStats] = useState(false);
+
+    // Update FPS meter
+    useEffect(() => {
+      if (!showPerformance) return;
+
+      const fpsInterval = setInterval(() => {
+        setFps(Math.round(getFPS()));
+      }, 1000);
+
+      return () => clearInterval(fpsInterval);
+    }, [showPerformance]);
+
+    // Update server status
+    useEffect(() => {
+      const serverStatusInterval = setInterval(() => {
+        setServerStatus(getServerStatus());
+      }, 5000);
+
+      return () => clearInterval(serverStatusInterval);
+    }, []);
+
+    const toggleExtendedStats = () => {
+      setShowExtendedStats(!showExtendedStats);
+    };
+
     // Chamber holds 30 bullets
     const CHAMBER_CAPACITY = 30;
 
@@ -335,6 +366,25 @@ const HUD = memo(
         {isReplenishing && replenishProgress > 0 && replenishProgress < 1 && (
           <ReplenishWheel progress={replenishProgress} />
         )}
+
+        {/* Server status indicator */}
+        <div className={styles.serverStats} onClick={toggleExtendedStats}>
+          <div className={styles.fpsDisplay}>{fps} FPS</div>
+
+          {showExtendedStats && (
+            <div className={styles.extendedStats}>
+              <div>
+                Players: {serverStatus.currentPlayers}/{serverStatus.maxPlayers}
+              </div>
+              <div>Queue: {serverStatus.queueLength}</div>
+              <div>Quality: {getPerformanceLevel()}</div>
+              <div>
+                Teams: {serverStatus.redTeamPlayers} R /{" "}
+                {serverStatus.blueTeamPlayers} B
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   }

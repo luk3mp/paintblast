@@ -1,0 +1,80 @@
+.container {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  font-family: monospace;
+  z-index: 1000;
+  user-select: none;
+  pointer-events: none;
+}
+
+.fpsCounter {
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 16px;
+  font-weight: bold;
+  text-align: right;
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.good {
+  color: #4afa4a;
+}
+
+.medium {
+  color: #fada5e;
+}
+
+.poor {
+  color: #fa4a4a;
+}
+
+.expandedStats {
+  margin-top: 5px;
+  background-color: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  padding: 10px;
+  border-radius: 4px;
+  max-width: 300px;
+  color: white;
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.section {
+  margin-bottom: 10px;
+}
+
+.section h3 {
+  margin: 0 0 5px 0;
+  font-size: 14px;
+  color: #aaa;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  padding-bottom: 3px;
+}
+
+.statRow {
+  display: flex;
+  justify-content: space-between;
+  margin: 2px 0;
+}
+
+@media (max-width: 600px) {
+  .fpsCounter {
+    font-size: 14px;
+    padding: 3px 6px;
+  }
+
+  .expandedStats {
+    font-size: 10px;
+    max-width: 200px;
+  }
+
+  .section h3 {
+    font-size: 12px;
+  }
+}

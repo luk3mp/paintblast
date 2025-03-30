@@ -73,6 +73,12 @@
   background-color: #5b6;
 }
 
+.button:disabled {
+  background-color: #555;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .error {
   color: #ff5555;
   margin: 0;
@@ -92,4 +98,113 @@
 
 .info ul {
   padding-left: 1.5rem;
+}
+
+/* Multiplayer toggle styles */
+.modeToggle {
+  margin: 1rem 0;
+}
+
+.toggleLabel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #ddd;
+}
+
+.toggle {
+  position: relative;
+  width: 50px;
+  height: 24px;
+  background-color: #444;
+  border-radius: 12px;
+  transition: background-color 0.3s;
+}
+
+.toggle.active {
+  background-color: #4a5;
+}
+
+.toggle.connecting {
+  background-color: #f90;
+  animation: pulse 1.5s infinite;
+}
+
+.toggleHandle {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background-color: #fff;
+  border-radius: 50%;
+  transition: transform 0.3s;
+}
+
+.toggle.active .toggleHandle {
+  transform: translateX(26px);
+}
+
+.toggle.connecting .toggleHandle {
+  transform: translateX(13px);
+}
+
+/* Server status styles */
+.serverStatus {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 5px;
+  padding: 0.8rem;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+  color: #ddd;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.statusIndicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.indicator.connected {
+  background-color: #4a5;
+  box-shadow: 0 0 5px #4a5;
+}
+
+.indicator.disconnected {
+  background-color: #f55;
+  box-shadow: 0 0 5px #f55;
+}
+
+.playerCount {
+  font-size: 0.9rem;
+}
+
+.queueInfo {
+  color: #f90;
+  margin-left: 0.5rem;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 1;
+  }
 }

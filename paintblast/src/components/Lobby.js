@@ -1,17 +1,109 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import styles from "../styles/Lobby.module.css";
+import {
+  getServerStatus,
+  connectSocket,
+  isMultiplayer,
+  getConnectionState,
+} from "../lib/socket";
+import { IS_MULTIPLAYER, SERVER_URL } from "../lib/config";
+import { EVENTS, addEventListener } from "../lib/events";
 
 export default function Lobby({ onJoinGame }) {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
+  const [serverStats, setServerStats] = useState(getServerStatus());
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [multiplayerEnabled, setMultiplayerEnabled] = useState(IS_MULTIPLAYER);
+  const [connectionState, setConnectionState] = useState(getConnectionState());
+
+  // Listen for server status updates and connection state changes
+  useEffect(() => {
+    // Handle server status updates
+    const removeStatusListener = addEventListener(
+      EVENTS.SERVER_STATUS_UPDATE,
+      (data) => {
+        setServerStats(data);
+      }
+    );
+
+    // Handle connection state changes
+    const removeConnectionListener = addEventListener(
+      EVENTS.CONNECTION_STATE_CHANGE,
+      (data) => {
+        setConnectionState(data.state);
+
+        // If connection established, remove connecting state
+        if (data.state === "connected") {
+          setIsConnecting(false);
+        }
+
+        // If connection failed, show error and switch to single-player
+        if (data.state === "error" && multiplayerEnabled) {
+          setError(
+            "Could not connect to server. Playing in single-player mode."
+          );
+          setMultiplayerEnabled(false);
+          setIsConnecting(false);
+        }
+      }
+    );
+
+    return () => {
+      removeStatusListener();
+      removeConnectionListener();
+    };
+  }, [multiplayerEnabled]);
+
+  // Initialize socket connection for multiplayer
+  useEffect(() => {
+    if (multiplayerEnabled && !isMultiplayer()) {
+      setIsConnecting(true);
+      connectSocket({
+        multiplayer: true,
+        url: SERVER_URL,
+      });
+
+      // Set a fallback timeout in case the connection event never fires
+      const connectionTimer = setTimeout(() => {
+        if (getConnectionState() !== "connected") {
+          setError(
+            "Could not connect to server. Playing in single-player mode."
+          );
+          setMultiplayerEnabled(false);
+        }
+        setIsConnecting(false);
+      }, 5000);
+
+      return () => clearTimeout(connectionTimer);
+    }
+  }, [multiplayerEnabled]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
+
     if (!name.trim()) {
       setError("Please enter a name");
       return;
     }
-    onJoinGame(name);
+
+    // Limit name length
+    const trimmedName = name.trim().substring(0, 16);
+
+    // Join game with name and multiplayer preference
+    onJoinGame(trimmedName, multiplayerEnabled);
+  };
+
+  const toggleMultiplayer = () => {
+    if (isConnecting) return;
+
+    if (!multiplayerEnabled) {
+      // Switching to multiplayer
+      setMultiplayerEnabled(true);
+    } else {
+      // Switching to single-player
+      setMultiplayerEnabled(false);
+    }
   };
 
   return (
@@ -27,10 +119,66 @@ export default function Lobby({ onJoinGame }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             className={styles.input}
+            maxLength={16}
           />
+
           {error && <p className={styles.error}>{error}</p>}
-          <button type="submit" className={styles.button}>
-            Join Game
+
+          <div className={styles.modeToggle}>
+            <label className={styles.toggleLabel}>
+              <span>Multiplayer</span>
+              <div
+                className={`${styles.toggle} ${
+                  multiplayerEnabled ? styles.active : ""
+                } ${isConnecting ? styles.connecting : ""}`}
+                onClick={toggleMultiplayer}
+              >
+                <div className={styles.toggleHandle}></div>
+              </div>
+              <span>
+                {isConnecting
+                  ? "Connecting..."
+                  : multiplayerEnabled
+                  ? "Online"
+                  : "Offline"}
+              </span>
+            </label>
+          </div>
+
+          {multiplayerEnabled && (
+            <div className={styles.serverStatus}>
+              <div className={styles.statusIndicator}>
+                <div
+                  className={`${styles.indicator} ${
+                    connectionState === "connected"
+                      ? styles.connected
+                      : styles.disconnected
+                  }`}
+                ></div>
+                <span>
+                  Server Status:{" "}
+                  {connectionState === "connected" ? "Online" : "Offline"}
+                </span>
+              </div>
+              <div className={styles.playerCount}>
+                <span>
+                  Players: {serverStats.currentPlayers}/{serverStats.maxPlayers}
+                </span>
+                {serverStats.queueLength > 0 && (
+                  <span className={styles.queueInfo}>
+                    ({serverStats.queueLength} in queue)
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            className={styles.button}
+            disabled={isConnecting}
+          >
+            {multiplayerEnabled ? "Join Multiplayer" : "Play Solo"}
           </button>
         </form>
 
@@ -42,6 +190,7 @@ export default function Lobby({ onJoinGame }) {
             <li>Left click to shoot</li>
             <li>R to reload</li>
             <li>Shift to sprint</li>
+            <li>F to capture the flag</li>
           </ul>
         </div>
       </div>

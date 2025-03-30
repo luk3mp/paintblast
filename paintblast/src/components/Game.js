@@ -17,8 +17,9 @@ import {
   getDynamicSettings,
   getAverageFPS,
 } from "../game/performanceSettings";
+import { EVENTS, addEventListener } from "../lib/events";
 
-export default function Game({ playerName, onGameEnd }) {
+export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
   const [socket, setSocket] = useState(null);
   const [players, setPlayers] = useState({});
   const [messages, setMessages] = useState([]);
@@ -158,59 +159,226 @@ export default function Game({ playerName, onGameEnd }) {
   }, [performanceLevel, paintballs.length, isGameReady, players, socket]);
 
   useEffect(() => {
-    // Connect to WebSocket server
-    const newSocket = io("http://localhost:8000");
+    // Only set up the socket connection if we actually need it
+    if (isMultiplayer) {
+      // Import the socket utilities
+      const {
+        getSocket,
+        connectSocket,
+        isConnected,
+        getConnectionState,
+      } = require("../lib/socket");
 
-    newSocket.on("connect", () => {
-      console.log("Connected to server");
+      // Get the existing socket or create a new one if needed
+      let socketInstance = getSocket();
 
-      // Randomly assign team on join - in a real implementation this might come from the server
-      const assignedTeam = Math.random() < 0.5 ? "Red" : "Blue";
-      console.log("Assigned team:", assignedTeam);
+      if (!socketInstance || !isConnected()) {
+        // Connect to the socket if we don't have a connection
+        socketInstance = connectSocket({ multiplayer: true });
+      }
 
-      // Set team in player state
-      setPlayerTeam(assignedTeam);
+      // Set up event listeners for the queue and connection state
+      const removeConnectionListener = addEventListener(
+        EVENTS.CONNECTION_STATE_CHANGE,
+        (data) => {
+          // If the connection state changes to queued, we need to notify the parent
+          if (data.state === "queued") {
+            onGameEnd();
+          }
+        }
+      );
 
-      // Update game stats with the team
-      setGameStats((prev) => {
-        console.log("Updating game stats with team:", assignedTeam);
-        return {
-          ...prev,
-          team: assignedTeam,
-        };
+      const removeQueueReadyListener = addEventListener(
+        EVENTS.QUEUE_READY,
+        () => {
+          console.log("Player can now join the game!");
+        }
+      );
+
+      // Set up event listeners for game events
+      const removePlayerKilledListener = addEventListener(
+        EVENTS.PLAYER_KILLED,
+        (data) => {
+          console.log(`Player killed: ${data.player} by ${data.killer}`);
+        }
+      );
+
+      const removeFlagCapturedListener = addEventListener(
+        EVENTS.FLAG_CAPTURED,
+        (data) => {
+          // Update flag state based on data
+          setFlagState((prev) => {
+            if (data.team === "red") {
+              return {
+                ...prev,
+                redFlagCaptured: true,
+                redFlagCarrier: data.carrier,
+              };
+            } else if (data.team === "blue") {
+              return {
+                ...prev,
+                blueFlagCaptured: true,
+                blueFlagCarrier: data.carrier,
+              };
+            }
+            return prev;
+          });
+        }
+      );
+
+      const removeFlagReturnedListener = addEventListener(
+        EVENTS.FLAG_RETURNED,
+        (data) => {
+          // Update flag state based on data
+          setFlagState((prev) => {
+            if (data.team === "red") {
+              return {
+                ...prev,
+                redFlagCaptured: false,
+                redFlagCarrier: null,
+              };
+            } else if (data.team === "blue") {
+              return {
+                ...prev,
+                blueFlagCaptured: false,
+                blueFlagCarrier: null,
+              };
+            }
+            return prev;
+          });
+        }
+      );
+
+      const removeFlagScoredListener = addEventListener(
+        EVENTS.FLAG_SCORED,
+        (data) => {
+          // Update score based on data
+          setGameStats((prev) => ({
+            ...prev,
+            redScore: data.redScore,
+            blueScore: data.blueScore,
+          }));
+
+          // Reset flag state
+          setFlagState((prev) => {
+            if (data.team === "red") {
+              return {
+                ...prev,
+                redFlagCaptured: false,
+                redFlagCarrier: null,
+              };
+            } else if (data.team === "blue") {
+              return {
+                ...prev,
+                blueFlagCaptured: false,
+                blueFlagCarrier: null,
+              };
+            }
+            return prev;
+          });
+        }
+      );
+
+      const removeGameStartListener = addEventListener(
+        EVENTS.GAME_START,
+        (data) => {
+          console.log("Game is starting!", data);
+        }
+      );
+
+      const removeGameOverListener = addEventListener(
+        EVENTS.GAME_OVER,
+        (data) => {
+          console.log("Game is over!", data);
+          onGameEnd();
+        }
+      );
+
+      // Set up direct socket event listeners
+      socketInstance.on("players", (data) => {
+        setPlayers(data);
       });
 
-      newSocket.emit("join", {
+      socketInstance.on("message", (message) => {
+        setMessages((prev) => [...prev, message]);
+      });
+
+      // Join the game
+      const assignedTeam = Math.random() < 0.5 ? "Red" : "Blue"; // Default team, server will override
+      console.log("Requesting team:", assignedTeam);
+
+      // Update game stats with the team
+      setPlayerTeam(assignedTeam);
+      setGameStats((prev) => ({
+        ...prev,
+        team: assignedTeam,
+      }));
+
+      // Send join request to server
+      socketInstance.emit("join", {
         name: playerName,
         team: assignedTeam,
       });
 
-      // The Player component will handle position setting
-    });
+      // Register for join success
+      socketInstance.on("joinSuccess", (data) => {
+        // Server has confirmed our join and assigned a team
+        console.log("Join success:", data);
+        setPlayerTeam(data.team);
+        setGameStats((prev) => ({
+          ...prev,
+          team: data.team,
+        }));
+      });
 
-    newSocket.on("players", (data) => {
-      setPlayers(data);
-    });
+      // Set the socket state
+      setSocket(socketInstance);
 
-    newSocket.on("message", (message) => {
-      setMessages((prev) => [...prev, message]);
-    });
+      // Clean up listeners
+      return () => {
+        removeConnectionListener();
+        removeQueueReadyListener();
+        removePlayerKilledListener();
+        removeFlagCapturedListener();
+        removeFlagReturnedListener();
+        removeFlagScoredListener();
+        removeGameStartListener();
+        removeGameOverListener();
 
-    newSocket.on("gameOver", () => {
-      onGameEnd();
-    });
+        // We don't disconnect here because that would break the queue system
+        // The socket will be managed by the socket.js utility
+      };
+    } else {
+      // For single player, we use the mock socket from socket.js
+      const { connectSocket, getSocket } = require("../lib/socket");
+      const mockSocket = connectSocket({ multiplayer: false });
 
-    setSocket(newSocket);
+      // Set up single player mode with the mock socket
+      setSocket(mockSocket);
 
-    return () => {
-      newSocket.disconnect();
-    };
-  }, [playerName, onGameEnd]);
+      // Random team assignment
+      const assignedTeam = Math.random() < 0.5 ? "Red" : "Blue";
+      setPlayerTeam(assignedTeam);
+      setGameStats((prev) => ({
+        ...prev,
+        team: assignedTeam,
+      }));
+
+      // Handle single player messages
+      mockSocket.on("message", (message) => {
+        setMessages((prev) => [...prev, message]);
+      });
+
+      // Clean up
+      return () => {
+        // No need to disconnect the mock socket
+      };
+    }
+  }, [playerName, onGameEnd, isMultiplayer]);
 
   const sendMessage = (text) => {
     if (socket && text.trim()) {
       socket.emit("message", {
-        sender: playerName,
         text,
         timestamp: new Date().toISOString(),
       });
@@ -218,11 +386,10 @@ export default function Game({ playerName, onGameEnd }) {
   };
 
   const updatePlayerPosition = (position, rotation) => {
-    if (socket) {
+    if (socket && isMultiplayer) {
       socket.emit("updatePosition", {
         position,
         rotation,
-        team: playerTeam, // Send team information to other players
       });
     }
   };
@@ -599,8 +766,16 @@ export default function Game({ playerName, onGameEnd }) {
   const handleFlagCapture = (capturedFlagTeam) => {
     console.log(`Player has captured the ${capturedFlagTeam} flag!`);
 
+    // Set local state
+    setPlayerFlagState((prev) => ({
+      ...prev,
+      isCarryingFlag: true,
+      carryingFlagTeam: capturedFlagTeam,
+    }));
+
     // Update flag state
     setFlagState((prev) => {
+      // Update the appropriate flag state
       if (capturedFlagTeam === "Red") {
         return {
           ...prev,
@@ -617,11 +792,10 @@ export default function Game({ playerName, onGameEnd }) {
       return prev;
     });
 
-    // Broadcast to other players via socket
-    if (socket) {
-      socket.emit("flagCapture", {
-        team: capturedFlagTeam,
-        carrier: playerName,
+    // Send to server in multiplayer mode
+    if (socket && isMultiplayer) {
+      socket.emit("captureFlag", {
+        team: capturedFlagTeam.toLowerCase(),
       });
     }
   };
@@ -630,49 +804,55 @@ export default function Game({ playerName, onGameEnd }) {
   const handleFlagReturn = (returnedFlagTeam) => {
     console.log(`Player has returned the ${returnedFlagTeam} flag to base!`);
 
-    // Update score based on which flag was returned
-    setGameStats((prev) => {
-      // Only increment score if player's team matches their base
-      const newRedScore =
-        playerTeam === "Red" && returnedFlagTeam === "Blue"
-          ? prev.redScore + 1
-          : prev.redScore;
+    // Reset player flag state
+    setPlayerFlagState((prev) => ({
+      ...prev,
+      isCarryingFlag: false,
+      carryingFlagTeam: null,
+    }));
 
-      const newBlueScore =
-        playerTeam === "Blue" && returnedFlagTeam === "Red"
-          ? prev.blueScore + 1
-          : prev.blueScore;
+    // In multiplayer, the server will handle this and send updates
+    if (socket && isMultiplayer) {
+      socket.emit("scoreFlag", {
+        team: returnedFlagTeam.toLowerCase(),
+      });
+    } else {
+      // In single player, we update the score locally
+      setGameStats((prev) => {
+        // Only increment score if player's team matches their base
+        const newRedScore =
+          playerTeam === "Red" && returnedFlagTeam === "Blue"
+            ? prev.redScore + 1
+            : prev.redScore;
 
-      return {
-        ...prev,
-        redScore: newRedScore,
-        blueScore: newBlueScore,
-      };
-    });
+        const newBlueScore =
+          playerTeam === "Blue" && returnedFlagTeam === "Red"
+            ? prev.blueScore + 1
+            : prev.blueScore;
 
-    // Reset flag state
-    setFlagState((prev) => {
-      if (returnedFlagTeam === "Red") {
         return {
           ...prev,
-          redFlagCaptured: false,
-          redFlagCarrier: null,
+          redScore: newRedScore,
+          blueScore: newBlueScore,
         };
-      } else if (returnedFlagTeam === "Blue") {
-        return {
-          ...prev,
-          blueFlagCaptured: false,
-          blueFlagCarrier: null,
-        };
-      }
-      return prev;
-    });
+      });
 
-    // Broadcast to other players via socket
-    if (socket) {
-      socket.emit("flagReturn", {
-        team: returnedFlagTeam,
-        scorer: playerTeam,
+      // Reset flag state
+      setFlagState((prev) => {
+        if (returnedFlagTeam === "Red") {
+          return {
+            ...prev,
+            redFlagCaptured: false,
+            redFlagCarrier: null,
+          };
+        } else if (returnedFlagTeam === "Blue") {
+          return {
+            ...prev,
+            blueFlagCaptured: false,
+            blueFlagCarrier: null,
+          };
+        }
+        return prev;
       });
     }
   };

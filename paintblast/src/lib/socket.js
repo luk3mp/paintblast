@@ -4,12 +4,26 @@
  */
 
 import { io } from "socket.io-client";
-import { SERVER_URL, DEBUG_MODE } from "./config";
+import {
+  SERVER_URL,
+  DEBUG_MODE,
+  MAX_PLAYERS,
+  QUEUE_REFRESH_INTERVAL,
+  SERVER_STATUS_REFRESH_RATE,
+} from "./config";
+import { EVENTS, emitEvent } from "./events";
 
 // Socket instance
 let socket = null;
 let isMultiplayerMode = false;
-let connectionState = "disconnected"; // disconnected, connecting, connected
+let connectionState = "disconnected"; // disconnected, connecting, connected, queued
+let queuePosition = 0;
+let serverStatus = {
+  currentPlayers: 0,
+  maxPlayers: MAX_PLAYERS,
+  queueLength: 0,
+  hasSpace: true,
+};
 
 // Event listeners
 const listeners = {};
@@ -35,6 +49,9 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
     console.log("🎮 Running in single-player mode (no server connection)");
     connectionState = "connected";
 
+    // Emit connection state change event
+    emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
+
     // Create a mock socket for single-player mode
     socket = createMockSocket();
 
@@ -44,6 +61,9 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
   // Multiplayer mode - connect to Socket.IO server
   console.log(`🌐 Connecting to multiplayer server: ${url}`);
   connectionState = "connecting";
+
+  // Emit connection state change event
+  emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
 
   try {
     socket = io(url, {
@@ -56,17 +76,105 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
     socket.on("connect", () => {
       console.log("✅ Connected to server");
       connectionState = "connected";
+
+      // Emit connection state change event
+      emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
+
+      // Request server status immediately after connecting
+      socket.emit("requestServerStatus");
     });
 
     socket.on("disconnect", (reason) => {
       console.log(`❌ Disconnected from server: ${reason}`);
       connectionState = "disconnected";
+
+      // Emit connection state change event
+      emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
     });
 
     socket.on("connect_error", (error) => {
       console.error("Connection error:", error);
       connectionState = "disconnected";
+
+      // Emit connection state change event
+      emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
     });
+
+    // Setup queue event handlers
+    socket.on("queuePosition", (data) => {
+      console.log(`Queue position update: ${data.position}`);
+      queuePosition = data.position;
+
+      if (data.canJoin) {
+        console.log("👍 Your turn to join the game!");
+        connectionState = "connected";
+
+        // Emit connection state change event
+        emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
+
+        // Notify listeners that player can now join
+        emitEvent(EVENTS.QUEUE_READY, {});
+      } else {
+        connectionState = "queued";
+
+        // Emit connection state change event
+        emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
+
+        // Notify listeners of queue position update
+        emitEvent(EVENTS.QUEUE_UPDATE, {
+          position: data.position,
+          estimatedWaitTime: data.estimatedWaitTime || null,
+        });
+      }
+    });
+
+    // Setup server status event handlers
+    socket.on("serverStatus", (status) => {
+      console.log("Server status update:", status);
+      serverStatus = {
+        currentPlayers: status.current_players,
+        maxPlayers: status.max_players,
+        queueLength: status.queue_length,
+        hasSpace: status.has_space,
+      };
+
+      // Notify listeners of server status update
+      emitEvent(EVENTS.SERVER_STATUS_UPDATE, serverStatus);
+    });
+
+    // Setup game event handlers
+    socket.on("playerKilled", (data) => {
+      emitEvent(EVENTS.PLAYER_KILLED, data);
+    });
+
+    socket.on("flagCaptured", (data) => {
+      emitEvent(EVENTS.FLAG_CAPTURED, data);
+    });
+
+    socket.on("flagReturned", (data) => {
+      emitEvent(EVENTS.FLAG_RETURNED, data);
+    });
+
+    socket.on("flagScored", (data) => {
+      emitEvent(EVENTS.FLAG_SCORED, data);
+    });
+
+    socket.on("gameStart", (data) => {
+      emitEvent(EVENTS.GAME_START, data);
+    });
+
+    socket.on("gameOver", (data) => {
+      emitEvent(EVENTS.GAME_END, data);
+    });
+
+    // Set up a timer to regularly request server status updates
+    if (multiplayer) {
+      setInterval(() => {
+        if (socket && socket.connected) {
+          socket.emit("requestServerStatus");
+        }
+      }, SERVER_STATUS_REFRESH_RATE);
+    }
 
     return socket;
   } catch (error) {
@@ -83,16 +191,29 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
 export const getSocket = () => socket;
 
 /**
- * Check if socket is connected
- * @returns {boolean} True if connected
+ * Check if socket is connected (or in queue)
+ * @returns {boolean} True if connected or in queue
  */
-export const isConnected = () => connectionState === "connected";
+export const isConnected = () =>
+  connectionState === "connected" || connectionState === "queued";
 
 /**
  * Get the current connection state
- * @returns {string} Connection state: 'disconnected', 'connecting', or 'connected'
+ * @returns {string} Connection state: 'disconnected', 'connecting', 'connected', or 'queued'
  */
 export const getConnectionState = () => connectionState;
+
+/**
+ * Get the current queue position (0 if not in queue)
+ * @returns {number} Queue position
+ */
+export const getQueuePosition = () => queuePosition;
+
+/**
+ * Get the current server status
+ * @returns {Object} Server status object
+ */
+export const getServerStatus = () => serverStatus;
 
 /**
  * Check if running in multiplayer mode
@@ -110,6 +231,7 @@ export const disconnectSocket = () => {
     }
     socket = null;
     connectionState = "disconnected";
+    queuePosition = 0;
     console.log("Socket disconnected");
   }
 };
@@ -149,6 +271,29 @@ function createMockSocket() {
             listener(data);
           });
         }, 50);
+      }
+
+      // Mock server status responses
+      if (event === "requestServerStatus") {
+        setTimeout(() => {
+          const mockStatus = {
+            current_players: 1, // Just you in single player
+            max_players: MAX_PLAYERS,
+            queue_length: 0,
+            has_space: true,
+          };
+
+          // Update local status
+          serverStatus = {
+            currentPlayers: mockStatus.current_players,
+            maxPlayers: mockStatus.max_players,
+            queueLength: mockStatus.queue_length,
+            hasSpace: mockStatus.has_space,
+          };
+
+          // Notify listeners
+          triggerMockEvent("serverStatusUpdate", serverStatus);
+        }, 100);
       }
     },
 
@@ -201,6 +346,14 @@ registerMockEmitHandler("join", (data) => {
   // Trigger a players update
   setTimeout(() => {
     triggerMockEvent("players", { "single-player": data });
+
+    // Also simulate a joinSuccess event
+    triggerMockEvent("joinSuccess", {
+      id: "single-player",
+      team: data.team || "red",
+      name: data.name || "Player",
+      totalPlayers: 1,
+    });
   }, 100);
 });
 
@@ -234,3 +387,26 @@ export const createEnemyBot = ({
 
   return bot;
 };
+
+/**
+ * Get estimated wait time based on queue position
+ * @param {number} position Queue position
+ * @returns {string} Formatted wait time estimate
+ */
+export const getEstimatedWaitTime = (position) => {
+  if (position <= 0) return "Ready to join";
+
+  // Simple estimate: 30 seconds per queue position
+  const seconds = position * 30;
+
+  if (seconds < 60) {
+    return `< 1 minute`;
+  } else {
+    const minutes = Math.ceil(seconds / 60);
+    return `~${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+};
+
+/**
+ * Update requirements.txt file to include the additional dependencies needed
+ */

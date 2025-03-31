@@ -32,6 +32,7 @@ import {
   getSocket,
   connectSocket,
 } from "../lib/socket";
+import SoundFX from "../lib/soundEffects";
 
 export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
   const [socket, setSocket] = useState(null);
@@ -124,6 +125,9 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
     nearFlagTeam: null,
     nearHomeBase: false,
   });
+
+  // Add isShooting state for gun animation
+  const [isShooting, setIsShooting] = useState(false);
 
   // Add this useEffect for performance monitoring
   useEffect(() => {
@@ -416,6 +420,20 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
     if (timeSinceLastShot < maxFireRate) {
       return; // Rate limit exceeded
     }
+
+    // Set shooting animation flag
+    setIsShooting(true);
+
+    // Play shooting sound with slight pitch variation for variety
+    SoundFX.play("shot", {
+      pitch: 0.9 + Math.random() * 0.2, // Random pitch between 0.9 and 1.1
+      volume: 0.8,
+    });
+
+    // Reset shooting flag after a short delay
+    setTimeout(() => {
+      setIsShooting(false);
+    }, 100);
 
     // Apply maximum paintball count limit
     if (paintballs.length >= performanceSettings.maxPaintballs) {
@@ -943,41 +961,66 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
             blueFlagCaptured={flagState.blueFlagCaptured}
           />
           <Player
-            key="local-player"
-            ref={playerRef}
-            isLocalPlayer={true}
+            key="localPlayer"
             position={getSpawnPositionForTeam(playerTeam || "Blue")}
+            rotation={playerRef.current?.rotation || [0, 0, 0]}
+            isLocalPlayer={true}
             name={playerName}
-            team={playerTeam || "Blue"} // Fallback to Blue if undefined
+            team={playerTeam || "Blue"}
             onPositionUpdate={(position, rotation) => {
-              // Only send position updates, no spawning logic here
               updatePlayerPosition(position, rotation);
             }}
             onShoot={handleShoot}
             onReload={(action) => {
+              console.log("Game received reload action:", action);
               if (action === "start") {
-                // Reload is starting
+                console.log("Starting reload from Game component");
                 setIsReloadInProgress(true);
+
+                // Update the UI state for reload in progress
+                setPlayerReloadState({
+                  isReloading: true,
+                  reloadProgress: 0,
+                  currentBatch: 0,
+                });
               } else if (action === "complete") {
-                // Reload is complete
+                console.log("Completing reload from Game component");
                 handleReloadComplete();
+
+                // Update the UI state for reload complete
+                setPlayerReloadState({
+                  isReloading: false,
+                  reloadProgress: 0,
+                  currentBatch: 0,
+                });
               } else if (action === "cancel") {
-                // Reload was canceled
+                console.log("Canceling reload from Game component");
                 setIsReloadInProgress(false);
+
+                // Update the UI state for reload canceled
+                setPlayerReloadState({
+                  isReloading: false,
+                  reloadProgress: 0,
+                  currentBatch: 0,
+                });
               }
             }}
             onReplenish={handleReplenish}
             onFlagCapture={handleFlagCapture}
             onFlagReturn={handleFlagReturn}
-            onPlayerState={setPlayerState}
             gameStats={{
               ...gameStats,
               team: playerTeam || gameStats.team || "Blue",
             }}
             debugMode={process.env.NODE_ENV === "development"}
+            isCarryingFlag={playerFlagState.isCarryingFlag}
+            carryingFlagTeam={playerFlagState.carryingFlagTeam}
+            isReloading={playerReloadState.isReloading}
+            reloadProgress={playerReloadState.reloadProgress}
+            onPlayerState={setPlayerState}
+            ref={playerRef}
           />
 
-          {/* Filter players based on distance and performance settings */}
           {playerRef.current &&
             Object.entries(
               getPlayersToRender(
@@ -986,17 +1029,45 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
               )
             )
               .filter(([id]) => id !== socket?.id)
-              .map(([id, player]) => (
-                <Player
-                  key={id}
-                  isLocalPlayer={false}
-                  position={player.position}
-                  rotation={player.rotation}
-                  name={player.name}
-                  team={player.team}
-                  useLowDetail={player.useLowDetail}
-                />
-              ))}
+              .map(([id, player]) => {
+                // Calculate distance to determine detail level
+                const playerPos = player.position || [0, 0, 0];
+                const localPos = playerRef.current.position || [0, 0, 0];
+                const dx = playerPos[0] - localPos[0];
+                const dy = playerPos[1] - localPos[1];
+                const dz = playerPos[2] - localPos[2];
+                const distanceSquared = dx * dx + dy * dy + dz * dz;
+                const useLowDetail =
+                  distanceSquared >
+                  getCurrentSettings().billboardDistance *
+                    getCurrentSettings().billboardDistance;
+
+                // Now return the Player component with all needed props
+                return (
+                  <Player
+                    key={id}
+                    isLocalPlayer={false}
+                    position={player.position}
+                    rotation={player.rotation}
+                    name={player.name || `Player ${id.substring(0, 4)}`}
+                    team={player.team}
+                    useLowDetail={useLowDetail}
+                    isCarryingFlag={
+                      (flagState.redFlagCarrier === player.name &&
+                        player.team === "Blue") ||
+                      (flagState.blueFlagCarrier === player.name &&
+                        player.team === "Red")
+                    }
+                    carryingFlagTeam={
+                      flagState.redFlagCarrier === player.name
+                        ? "Red"
+                        : flagState.blueFlagCarrier === player.name
+                        ? "Blue"
+                        : null
+                    }
+                  />
+                );
+              })}
 
           {paintballs.map((paintball) => (
             <Paintball

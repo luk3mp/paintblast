@@ -9,6 +9,8 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Vector3, Quaternion, Euler } from "three";
 import { RigidBody, CapsuleCollider, useRapier } from "@react-three/rapier";
 import { useKeyboardControls } from "../hooks/useKeyboardControls";
+import CharacterModel from "./models/CharacterModel";
+import FirstPersonGun from "./models/FirstPersonGun";
 
 // Movement constants
 const SPEED = 500.0; // Force-based movement needs higher values
@@ -42,6 +44,12 @@ const Player = forwardRef(
       debugMode = false,
       gameStats = null,
       onPlayerState = () => {},
+      useLowDetail = false,
+      isCarryingFlag = false,
+      carryingFlagTeam = null,
+      isReloading = false,
+      reloadProgress = 0,
+      isShooting = false, // Use this prop from parent instead of local state
     },
     ref
   ) => {
@@ -112,15 +120,40 @@ const Player = forwardRef(
     const MAX_AMMO_PER_POUCH = 30;
     const MAX_POUCHES = 3;
 
-    // Keep only these state declarations for shooting and reloading
-    const [isShooting, setIsShooting] = useState(false);
-    const lastShotTime = useRef(0);
+    // Keep these state declarations for backward compatibility
+    // but use the props when available instead
+    const [isReloadingLocal, setIsReloadingLocal] = useState(false);
+    const [reloadProgressLocal, setReloadProgressLocal] = useState(0);
+    const [isShooting_internal, setIsShooting_internal] = useState(false);
+
+    // Use the prop values if provided, otherwise use local state
+    const effectiveIsReloading = isReloading || isReloadingLocal;
+    const effectiveReloadProgress = reloadProgress || reloadProgressLocal;
+    const effectiveIsShooting = isShooting || isShooting_internal;
+
+    // Add this comment explaining character models integration
+    /**
+     * Character Model Integration
+     *
+     * This Player component now uses two specialized models:
+     * 1. FirstPersonGun - For the local player's first-person view
+     * 2. CharacterModel - For all other players' third-person view
+     *
+     * The CharacterModel component handles team-colored visuals and displays
+     * the player's name tag, while FirstPersonGun provides an immersive
+     * first-person experience with appropriate animations.
+     */
+
+    // Add a constant for fire rate if it doesn't exist
     const FIRE_RATE = 150; // ms between shots
-    const [isReloading, setIsReloading] = useState(false);
-    const [reloadProgress, setReloadProgress] = useState(0);
-    const [reloadStartTime, setReloadStartTime] = useState(null);
     const RELOAD_TIME = 5000; // 5 seconds to reload
     const MAGAZINE_CAPACITY = 30;
+
+    // Add these refs if they don't exist
+    const lastShotTime = useRef(0);
+    const reloadStartTime = useRef(Date.now());
+    const hasTriggeredReload = useRef(false);
+    const reloading = useRef(false);
 
     const {
       forward: moveForward,
@@ -136,9 +169,6 @@ const Player = forwardRef(
 
     // Add these states and constants for the reload system
     const reloadIntervalRef = useRef(null);
-
-    // Add a flag to track if we've already triggered a reload
-    const hasTriggeredReload = useRef(false);
 
     // Add a function to handle reload completion
     const onReloadComplete = useRef(null);
@@ -171,13 +201,14 @@ const Player = forwardRef(
 
     // Add flag capture state
     const [nearFlagTeam, setNearFlagTeam] = useState(null);
-    const [isCarryingFlag, setIsCarryingFlag] = useState(false);
-    const [carryingFlagTeam, setCarryingFlagTeam] = useState(null);
     const [nearHomeBase, setNearHomeBase] = useState(false);
+
+    // Add this ref at the top with other refs
+    const lastCaptureState = useRef(false);
 
     // Add a function to start replenishing
     const startReplenish = () => {
-      if (isReplenishing || isReloading || !gameStats) return;
+      if (isReplenishing || effectiveIsReloading || !gameStats) return;
 
       // Only allow replenish if missing canisters
       // if (gameStats.canistersRemaining >= 2) {
@@ -240,7 +271,11 @@ const Player = forwardRef(
 
     useEffect(() => {
       if (!isLocalPlayer) {
-        setPlayerPosition(position);
+        setPlayerPosition({
+          x: position[0],
+          y: position[1],
+          z: position[2],
+        });
         setPlayerRotation(rotation);
       }
     }, [isLocalPlayer, position, rotation]);
@@ -280,37 +315,10 @@ const Player = forwardRef(
             setKeys((prev) => ({ ...prev, crouch: true }));
             break;
           case "KeyR":
-            onReload();
+            // R key is for reload - use the keyboard controls hook
             break;
           case "KeyF":
-            // Handle flag capture key
-            if (nearFlagTeam && !isCarryingFlag && nearFlagTeam !== team) {
-              console.log(`Attempting to capture ${nearFlagTeam} flag`);
-              setIsCarryingFlag(true);
-              setCarryingFlagTeam(nearFlagTeam);
-              onFlagCapture(nearFlagTeam);
-
-              // Update UI about flag carrying status
-              if (onPlayerState) {
-                onPlayerState({
-                  isCarryingFlag: true,
-                  carryingFlagTeam: nearFlagTeam,
-                });
-              }
-            } else if (isCarryingFlag && nearHomeBase) {
-              console.log(`Returning ${carryingFlagTeam} flag to base`);
-              onFlagReturn(carryingFlagTeam);
-              setIsCarryingFlag(false);
-              setCarryingFlagTeam(null);
-
-              // Update UI about flag return
-              if (onPlayerState) {
-                onPlayerState({
-                  isCarryingFlag: false,
-                  carryingFlagTeam: null,
-                });
-              }
-            }
+            // F key is for flag capture - use the keyboard controls hook
             break;
           default:
             break;
@@ -352,12 +360,24 @@ const Player = forwardRef(
 
       const handleMouseDown = () => {
         if (document.pointerLockElement) {
-          setIsShooting(true);
+          // Set the internal shooting state
+          setIsShooting_internal(true);
+
+          // Call shoot directly to handle immediate shooting
+          // The useFrame loop will handle continuous shooting
+          if (!effectiveIsReloading && ammoAvailable()) {
+            // Use try-catch to handle any errors during shooting
+            try {
+              shoot();
+            } catch (error) {
+              console.error("Error during shooting:", error);
+            }
+          }
         }
       };
 
       const handleMouseUp = () => {
-        setIsShooting(false);
+        setIsShooting_internal(false);
       };
 
       window.addEventListener("keydown", handleKeyDown);
@@ -428,8 +448,30 @@ const Player = forwardRef(
           isOnGround.current = checkOnGround();
         }
 
-        // Get current position from the rigid body
-        const position = playerRef.current.translation();
+        // Get current position from the rigid body - safely handle the case
+        // where playerRef.current might not have translation method
+        let position;
+        try {
+          // Try to get position from RigidBody if available
+          if (typeof playerRef.current.translation === "function") {
+            position = playerRef.current.translation();
+          } else {
+            // Fall back to playerPosition state
+            position = {
+              x: playerPosition.x,
+              y: playerPosition.y,
+              z: playerPosition.z,
+            };
+          }
+        } catch (error) {
+          console.error("Error getting player position:", error);
+          // Fall back to playerPosition state
+          position = {
+            x: playerPosition.x,
+            y: playerPosition.y,
+            z: playerPosition.z,
+          };
+        }
 
         // Throttle position updates to server/other players
         if (now - lastPositionUpdateTime.current >= POSITION_UPDATE_RATE) {
@@ -682,8 +724,36 @@ const Player = forwardRef(
 
         // Update canister crate proximity check less frequently to improve performance
         if (frameCount.current % 5 === 0) {
-          // Get current position
-          const position = playerRef.current.translation();
+          // Get current position safely - ensure we have a position even if translation() fails
+          let position;
+          try {
+            if (
+              isLocalPlayer &&
+              playerRef.current &&
+              typeof playerRef.current.translation === "function"
+            ) {
+              // Local player with RigidBody has translation() method
+              position = playerRef.current.translation();
+            } else {
+              // Remote player or non-initialized player - use the playerPosition state
+              position = {
+                x: playerPosition.x,
+                y: playerPosition.y,
+                z: playerPosition.z,
+              };
+            }
+          } catch (error) {
+            console.error(
+              "Error getting player position for crate detection:",
+              error
+            );
+            // Fall back to playerPosition state
+            position = {
+              x: playerPosition.x,
+              y: playerPosition.y,
+              z: playerPosition.z,
+            };
+          }
 
           // Check if near red or blue canister crate
           // Update coordinates to match the positions of crates at rear walls
@@ -716,10 +786,10 @@ const Player = forwardRef(
           }
         }
 
-        // Check if reload key is pressed and player is near a crate
+        // Check if the player is near a canister crate and can replenish
         if (
           reloadInput &&
-          !isReloading &&
+          !effectiveIsReloading &&
           !isReplenishing &&
           isNearCanisterCrate &&
           gameStats
@@ -732,8 +802,36 @@ const Player = forwardRef(
 
         // Check for flag capture zones every few frames
         if (frameCount.current % 5 === 0) {
-          // Get current position
-          const position = playerRef.current.translation();
+          // Get current position safely
+          let position;
+          try {
+            if (
+              isLocalPlayer &&
+              playerRef.current &&
+              typeof playerRef.current.translation === "function"
+            ) {
+              // Local player with RigidBody has translation() method
+              position = playerRef.current.translation();
+            } else {
+              // Remote player or non-initialized player - use the playerPosition state
+              position = {
+                x: playerPosition.x,
+                y: playerPosition.y,
+                z: playerPosition.z,
+              };
+            }
+          } catch (error) {
+            console.error(
+              "Error getting player position for flag detection:",
+              error
+            );
+            // Fall back to playerPosition state
+            position = {
+              x: playerPosition.x,
+              y: playerPosition.y,
+              z: playerPosition.z,
+            };
+          }
 
           // Flag positions for both teams
           const redFlagPos = [0, 0, -120]; // Red team flag at north castle
@@ -779,62 +877,19 @@ const Player = forwardRef(
             }
           }
         }
-
-        // Check if reload key is pressed and player is near a crate
-        if (
-          reloadInput &&
-          !isReloading &&
-          !isReplenishing &&
-          isNearCanisterCrate &&
-          gameStats
-        ) {
-          startReplenish();
-        } else if (!reloadInput && isReplenishing) {
-          // Cancel replenish if key is released
-          cancelReplenish();
-        }
-
-        // Check if flag capture key is pressed
-        if (captureInput) {
-          if (nearFlagTeam && !isCarryingFlag && nearFlagTeam !== team) {
-            console.log(`Attempting to capture ${nearFlagTeam} flag`);
-            setIsCarryingFlag(true);
-            setCarryingFlagTeam(nearFlagTeam);
-            onFlagCapture(nearFlagTeam);
-
-            // Update UI about flag carrying status
-            if (onPlayerState) {
-              onPlayerState({
-                isCarryingFlag: true,
-                carryingFlagTeam: nearFlagTeam,
-              });
-            }
-          } else if (isCarryingFlag && nearHomeBase) {
-            console.log(`Returning ${carryingFlagTeam} flag to base`);
-            onFlagReturn(carryingFlagTeam);
-            setIsCarryingFlag(false);
-            setCarryingFlagTeam(null);
-
-            // Update UI about flag return
-            if (onPlayerState) {
-              onPlayerState({
-                isCarryingFlag: false,
-                carryingFlagTeam: null,
-              });
-            }
-          }
-        }
       }
 
       // Handle reloading
-      if (isReloading) {
+      if (effectiveIsReloading) {
         const now = Date.now();
-        const elapsed = now - reloadStartTime;
+        const elapsed = now - reloadStartTime.current;
         const progress = Math.min(elapsed / RELOAD_TIME, 1);
 
+        console.log(`Reload progress: ${(progress * 100).toFixed(1)}%`);
+
         // Only update if progress changed by at least 1%
-        if (Math.abs(progress - reloadProgress) >= 0.01) {
-          setReloadProgress(progress);
+        if (Math.abs(progress - effectiveReloadProgress) >= 0.01) {
+          setReloadProgressLocal(progress);
 
           // Update UI about reload progress
           if (onPlayerState) {
@@ -847,6 +902,7 @@ const Player = forwardRef(
 
         // Check if reload is complete
         if (progress >= 1) {
+          console.log("Reload complete, progress reached 100%");
           finishReload();
         }
 
@@ -862,7 +918,7 @@ const Player = forwardRef(
       }
 
       // Normal shooting
-      if (isShooting && gameStats.chamberAmmo > 0) {
+      if (effectiveIsShooting && gameStats.chamberAmmo > 0) {
         const now = Date.now();
         if (now - lastShotTime.current >= FIRE_RATE) {
           shoot();
@@ -870,17 +926,105 @@ const Player = forwardRef(
         }
       }
 
-      // Check if reload key is being held
-      if (
-        reloadInput &&
-        !isReloading &&
-        gameStats.chamberAmmo === 0 && // Only allow reload when chamber is empty
-        gameStats.canistersRemaining > 0
-      ) {
-        startReload();
-      } else if (!reloadInput && isReloading) {
-        // Cancel reload if key is released
+      // Check for reload key is being held - Add more debugging
+      if (reloadInput && !effectiveIsReloading) {
+        console.log(
+          "Reload key detected via hook, canister status:",
+          gameStats ? gameStats.canistersRemaining : "no stats"
+        );
+
+        // Remove the restriction that chamber must be empty to reload
+        if (gameStats && gameStats.canistersRemaining > 0) {
+          console.log("Starting reload process via hook...");
+          startReload();
+        } else {
+          console.log(
+            "Cannot reload: ",
+            !gameStats ? "no game stats" : "no canisters remaining"
+          );
+        }
+      } else if (reloadInput && effectiveIsReloading) {
+        console.log(
+          "Reload in progress: ",
+          effectiveReloadProgress * 100,
+          "% complete"
+        );
+      } else if (!reloadInput && effectiveIsReloading) {
+        // Cancel reload if key is released - restore this functionality
         cancelReload();
+      }
+
+      // Check if player is pressing the shoot input (from keyboard controls hook)
+      // Restore shooting functionality
+      if (shootInput && !effectiveIsReloading && ammoAvailable()) {
+        shoot();
+      }
+
+      // Check for flag capture input (Key F)
+      if (captureInput) {
+        console.log(`Flag capture input detected: 
+          nearFlagTeam: ${nearFlagTeam}
+          isCarryingFlag: ${isCarryingFlag}
+          nearHomeBase: ${nearHomeBase}
+          team: ${team}
+        `);
+
+        // Don't repeatedly process - only on newly pressed
+        if (
+          !lastCaptureState.current &&
+          nearFlagTeam &&
+          !isCarryingFlag &&
+          nearFlagTeam !== team
+        ) {
+          console.log(`Attempting to capture ${nearFlagTeam} flag`);
+          // Instead of trying to update the state directly, call the onFlagCapture callback
+          // which will update the parent component's state
+          onFlagCapture(nearFlagTeam);
+
+          // Update UI about flag carrying status
+          if (onPlayerState) {
+            onPlayerState({
+              isCarryingFlag: true,
+              carryingFlagTeam: nearFlagTeam,
+            });
+          }
+        } else if (
+          !lastCaptureState.current &&
+          isCarryingFlag &&
+          nearHomeBase
+        ) {
+          console.log(`Returning ${carryingFlagTeam} flag to base`);
+          onFlagReturn(carryingFlagTeam);
+
+          // Update UI about flag return
+          if (onPlayerState) {
+            onPlayerState({
+              isCarryingFlag: false,
+              carryingFlagTeam: null,
+            });
+          }
+        }
+        lastCaptureState.current = true;
+      } else {
+        lastCaptureState.current = false;
+      }
+
+      // Throttle debug logging to avoid console spam
+      if (isLocalPlayer && debugMode && frameCount.current % 60 === 0) {
+        console.log(`Player state: 
+          shootInput: ${shootInput}
+          reloadInput: ${reloadInput}
+          captureInput: ${captureInput}
+          isShooting: ${effectiveIsShooting}
+          isReloading: ${effectiveIsReloading}
+          ammoAvailable: ${ammoAvailable()}
+          nearFlagTeam: ${nearFlagTeam}
+          nearHomeBase: ${nearHomeBase}
+          isCarryingFlag: ${isCarryingFlag}
+          carryingFlagTeam: ${carryingFlagTeam}
+          isNearCanisterCrate: ${isNearCanisterCrate}
+          position: ${JSON.stringify(playerPosition)}
+        `);
       }
     });
 
@@ -929,43 +1073,65 @@ const Player = forwardRef(
 
     // Function to start reload
     const startReload = () => {
-      // Only allow reload when chamber is empty
-      if (gameStats.chamberAmmo > 0) {
-        console.log("Cannot reload: Chamber still has ammo");
+      console.log("startReload called, checking conditions:", {
+        effectiveIsReloading,
+        gameStats: gameStats
+          ? `Stats available, canisters: ${gameStats.canistersRemaining}`
+          : "No stats",
+      });
+
+      // Allow reload at any time as long as we have canisters
+      if (effectiveIsReloading) {
+        console.log("Cannot reload: Already reloading");
         return;
       }
 
-      if (isReloading || !gameStats) return;
+      if (!gameStats) {
+        console.log("Cannot reload: No game stats available");
+        return;
+      }
 
       // Check if we have any canisters left
-      if (gameStats.canistersRemaining <= 0) return;
+      if (gameStats.canistersRemaining <= 0) {
+        console.log("Cannot reload: No canisters remaining");
+        return;
+      }
 
       console.log("Starting reload...");
-      setIsReloading(true);
-      setReloadStartTime(Date.now());
-      setReloadProgress(0);
+      setIsReloadingLocal(true);
+      reloadStartTime.current = Date.now();
+      setReloadProgressLocal(0);
 
       // Notify Game component that reload has started
       if (onReload) {
-        onReload("start");
+        try {
+          console.log("Calling onReload('start')");
+          onReload("start");
+        } catch (error) {
+          console.error("Error in onReload:", error);
+        }
       }
 
       // Notify UI about reload status
       if (onPlayerState) {
-        onPlayerState({
-          isReloading: true,
-          reloadProgress: 0,
-        });
+        try {
+          onPlayerState({
+            isReloading: true,
+            reloadProgress: 0,
+          });
+        } catch (error) {
+          console.error("Error in onPlayerState:", error);
+        }
       }
     };
 
     // Function to cancel reload
     const cancelReload = () => {
-      if (!isReloading) return;
+      if (!effectiveIsReloading) return;
 
       console.log("Reload canceled");
-      setIsReloading(false);
-      setReloadProgress(0);
+      setIsReloadingLocal(false);
+      setReloadProgressLocal(0);
 
       // Notify UI about reload status
       if (onPlayerState) {
@@ -978,24 +1144,45 @@ const Player = forwardRef(
 
     // Function to finish reload
     const finishReload = () => {
-      if (!gameStats || !isReloading) return;
+      console.log("finishReload called, current state:", {
+        gameStats: gameStats ? "available" : "not available",
+        isReloading: effectiveIsReloading,
+      });
 
-      console.log("Reload complete");
-      setIsReloading(false);
-      setReloadProgress(0);
+      if (!gameStats) {
+        console.log("Cannot finish reload: No game stats available");
+        return;
+      }
+
+      if (!effectiveIsReloading) {
+        console.log("Cannot finish reload: Not currently reloading");
+        return;
+      }
+
+      console.log("Reload complete, updating state");
+      setIsReloadingLocal(false);
+      setReloadProgressLocal(0);
 
       // Notify Game component about the reload completion
       if (onReload) {
-        // Call the onReloadComplete function to update the ammo
-        onReload("complete");
+        try {
+          console.log("Calling onReload('complete') to update ammo");
+          onReload("complete");
+        } catch (error) {
+          console.error("Error in onReload complete:", error);
+        }
       }
 
       // Notify UI about reload status
       if (onPlayerState) {
-        onPlayerState({
-          isReloading: false,
-          reloadProgress: 0,
-        });
+        try {
+          onPlayerState({
+            isReloading: false,
+            reloadProgress: 0,
+          });
+        } catch (error) {
+          console.error("Error updating UI about reload completion:", error);
+        }
       }
     };
 
@@ -1041,7 +1228,7 @@ const Player = forwardRef(
       setNearRefillStation(isNearStation);
 
       // Handle refill input
-      if (nearRefillStation && refillInput && !isReloading) {
+      if (nearRefillStation && refillInput && !effectiveIsReloading) {
         startRefill();
       } else if (!refillInput && isRefilling) {
         // Cancel refill if player releases key
@@ -1050,29 +1237,110 @@ const Player = forwardRef(
       }
 
       // Handle reload input
-      if (reloadInput && !isReloading && !isRefilling) {
+      if (reloadInput && !effectiveIsReloading && !isRefilling) {
         startReload();
       }
     });
 
+    // Move this function just before the shoot function (around line 1060)
+    const ammoAvailable = () => {
+      return gameStats && gameStats.chamberAmmo > 0;
+    };
+
     const shoot = () => {
-      if (!gameStats || gameStats.chamberAmmo <= 0) return;
+      if (
+        effectiveIsReloading ||
+        maxJumpHeight.current > 0 ||
+        lastShotTime.current + FIRE_RATE > Date.now() ||
+        !ammoAvailable()
+      ) {
+        console.log("Cannot shoot: conditions not met", {
+          isReloading: effectiveIsReloading,
+          jumpHeight: maxJumpHeight.current,
+          lastShot: lastShotTime.current,
+          hasAmmo: ammoAvailable(),
+          timestamp: Date.now(),
+        });
+        return false;
+      }
 
-      // Get camera direction
-      const direction = new Vector3(0, 0, -1);
-      direction.applyQuaternion(camera.quaternion);
+      // Make sure we're ready to shoot - need playerRef and camera
+      if (!camera) {
+        console.warn("Cannot shoot: camera not available");
+        return false;
+      }
 
-      // Get camera position
-      const cameraPos = camera.position.clone();
+      lastShotTime.current = Date.now();
+      console.log("Shooting...");
 
-      // Spawn the paintball slightly in front of the camera
-      const spawnDistance = 0.3;
-      const spawnPosition = cameraPos
-        .clone()
-        .add(direction.clone().multiplyScalar(spawnDistance));
+      // Set internal shooting state if not controlled by props
+      if (!effectiveIsShooting) {
+        setIsShooting_internal(true);
+        setTimeout(() => setIsShooting_internal(false), 100);
+      }
 
-      // Call the onShoot callback
-      onShoot(spawnPosition.toArray(), direction.toArray());
+      if (onShoot) {
+        // Get current position - for local player, use camera position for more accurate shooting
+        let position;
+
+        try {
+          if (isLocalPlayer && camera) {
+            // For local player, use the camera position for more accurate shooting
+            position = [
+              camera.position.x,
+              camera.position.y,
+              camera.position.z,
+            ];
+            console.log("Using camera position for shot:", position);
+          } else if (
+            playerRef.current &&
+            typeof playerRef.current.translation === "function"
+          ) {
+            // For remote players with rigid body, use the rigid body position
+            const translation = playerRef.current.translation();
+            position = [translation.x, translation.y, translation.z];
+            console.log("Using RigidBody position for shot:", position);
+          } else {
+            // Fallback to playerPosition state
+            position = [playerPosition.x, playerPosition.y, playerPosition.z];
+            console.log("Using playerPosition state for shot:", position);
+          }
+        } catch (error) {
+          console.error("Error getting position for shot:", error);
+          // Fall back to playerPosition state in case of any error
+          position = [playerPosition.x, playerPosition.y, playerPosition.z];
+          console.log(
+            "Fallback: Using playerPosition state for shot:",
+            position
+          );
+        }
+
+        // Get camera direction
+        const cameraDirection = new Vector3();
+        camera.getWorldDirection(cameraDirection);
+        cameraDirection.normalize();
+        console.log("Camera direction for shot:", [
+          cameraDirection.x,
+          cameraDirection.y,
+          cameraDirection.z,
+        ]);
+
+        try {
+          // Call the parent's onShoot callback
+          onShoot(position, [
+            cameraDirection.x,
+            cameraDirection.y,
+            cameraDirection.z,
+          ]);
+          console.log("Shot fired successfully!");
+          return true;
+        } catch (error) {
+          console.error("Error during shot:", error);
+          return false;
+        }
+      }
+
+      return false;
     };
 
     // Add an effect to log when player is first created
@@ -1133,10 +1401,33 @@ const Player = forwardRef(
       }
     }, [team]);
 
+    // Check for keyboard events related to reloading
+    useEffect(() => {
+      // Only add this effect for local players
+      if (!isLocalPlayer) return;
+
+      const handleKeyDown = (e) => {
+        if (e.code === "KeyR") {
+          console.log("R KEY PRESSED DIRECTLY - Triggering reload");
+          if (
+            !effectiveIsReloading &&
+            gameStats &&
+            gameStats.canistersRemaining > 0
+          ) {
+            console.log("DIRECT RELOAD START");
+            startReload();
+          }
+        }
+      };
+
+      window.addEventListener("keydown", handleKeyDown);
+      return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [isLocalPlayer, effectiveIsReloading, gameStats]);
+
     return (
       <>
         {isLocalPlayer ? (
-          // Local player with physics
+          // Local player with physics and first person view
           <RigidBody
             ref={playerRef}
             position={getRigidBodyPosition()}
@@ -1163,34 +1454,41 @@ const Player = forwardRef(
             {/* Position the collider so its base aligns with y=0 */}
             <CapsuleCollider args={[0.85, 0.5]} position={[0, 0.85, 0]} />
 
-            {/* Invisible mesh for the local player */}
+            {/* Invisible mesh for the local player - using opacity 0 to hide completely */}
             <mesh visible={false}>
               <capsuleGeometry args={[0.5, 1.7, 8, 16]} />
               <meshBasicMaterial
                 attach="material"
                 color={team === "Red" ? "#ff0000" : "#0066ff"}
-                opacity={0.5}
+                opacity={0}
                 transparent
               />
             </mesh>
+
+            {/* First person gun model visible to the local player */}
+            <FirstPersonGun
+              team={team}
+              isShooting={effectiveIsShooting}
+              isReloading={effectiveIsReloading}
+              reloadProgress={effectiveReloadProgress}
+            />
           </RigidBody>
         ) : (
-          // Remote player (third person)
-          <group position={playerPosition} rotation={playerRotation}>
-            <mesh castShadow>
-              <capsuleGeometry args={[0.5, 1.5, 8, 16]} />
-              <meshStandardMaterial
-                attach="material"
-                color={team === "Red" ? "#D32F2F" : "#1976D2"}
-              />
-            </mesh>
-            <mesh castShadow position={[0, 1.2, 0]}>
-              <sphereGeometry args={[0.4, 16, 16]} />
-              <meshStandardMaterial
-                attach="material"
-                color={team === "Red" ? "#F44336" : "#2196F3"}
-              />
-            </mesh>
+          // Remote player with character model and name tag
+          <group
+            ref={playerRef}
+            position={position}
+            rotation={rotation}
+            userData={{ type: "player", isLocal: false }}
+          >
+            <CharacterModel
+              team={team}
+              name={name}
+              isLocalPlayer={false}
+              isCarryingFlag={isCarryingFlag}
+              carryingFlagTeam={carryingFlagTeam}
+              useLowDetail={useLowDetail}
+            />
           </group>
         )}
       </>

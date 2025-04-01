@@ -88,6 +88,9 @@ const PaintballGun = forwardRef(
   }
 );
 
+// Add display name to fix the ESLint error
+PaintballGun.displayName = "PaintballGun";
+
 // Paintball projectile
 export function Paintball({ position, velocity, color = "#ff4500" }) {
   const paintballRef = useRef();

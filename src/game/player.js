@@ -1493,4 +1493,7 @@ const Player = forwardRef(
   }
 );
 
+// Add display name to fix the ESLint error
+Player.displayName = "Player";
+
 export default Player;

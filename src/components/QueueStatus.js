@@ -90,8 +90,8 @@ export default function QueueStatus({ onCancel, onJoinGame }) {
         <h1 className={styles.title}>Waiting in Queue</h1>
         <p className={styles.position}>Position: {position}</p>
         <p className={styles.message}>
-          The server is currently full. You'll be automatically joined when a
-          spot opens up.
+          The server is currently full. You&apos;ll be automatically joined when
+          a spot opens up.
         </p>
         <p className={styles.waitTime}>
           Estimated wait time: {waitTime || "Calculating" + dots}

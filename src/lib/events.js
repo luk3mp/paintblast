@@ -12,6 +12,7 @@ export const EVENTS = {
   SERVER_STATUS_UPDATE: "serverStatusUpdate",
   SERVER_STATUS_CHANGE: "serverStatusChange",
   CONNECTION_STATE_CHANGE: "connectionStateChange",
+  CONNECTION_ERROR: "connectionError",
   GAME_START: "gameStart",
   GAME_END: "gameEnd",
   PLAYER_KILLED: "playerKilled",

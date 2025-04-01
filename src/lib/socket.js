@@ -46,6 +46,14 @@ let batchedUpdates = {
   lastUpdateTime: 0,
 };
 
+// Last time we received player data
+let lastPlayerDataTimestamp = 0;
+
+// Reconnection tracking
+let reconnectionAttempts = 0;
+const MAX_RECONNECTION_ATTEMPTS = 15;
+let reconnectionTimer = null;
+
 // Create a throttle function to limit update frequency
 const throttle = (func, delay) => {
   let lastCall = 0;
@@ -92,6 +100,15 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
     return socket;
   }
 
+  // Reset reconnection attempts when starting a new connection
+  reconnectionAttempts = 0;
+
+  // Clear any existing reconnection timer
+  if (reconnectionTimer) {
+    clearTimeout(reconnectionTimer);
+    reconnectionTimer = null;
+  }
+
   // Determine the actual URL to connect to
   // Priority: function param -> environment variable -> config -> localhost fallback
   const targetUrl =
@@ -125,6 +142,8 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
       timeout: 20000, // Increased from 10000
       transports: ["websocket", "polling"], // Add polling as fallback
       autoConnect: true,
+      forceNew: false, // Allow reusing connections
+      multiplex: true, // Enable connection multiplexing
     };
 
     // Add compression if enabled
@@ -142,11 +161,20 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
 
     // Set up ping-pong heartbeat to detect connection issues
     let lastPong = Date.now();
+    let lastPlayerUpdate = Date.now();
 
     const heartbeat = setInterval(() => {
+      // Check if we haven't received a player update in a while (30 seconds)
+      const playerUpdateTimeout = Date.now() - lastPlayerUpdate > 30000;
+
       // If we haven't received a pong in 30 seconds, assume connection is lost
-      if (Date.now() - lastPong > 30000 && connectionState === "connected") {
-        console.log("❌ Server heartbeat missed, reconnecting...");
+      if (
+        (Date.now() - lastPong > 30000 || playerUpdateTimeout) &&
+        connectionState === "connected"
+      ) {
+        console.log(
+          "❌ Server heartbeat missed or no player updates, reconnecting..."
+        );
         connectionState = "connecting";
         emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
         emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
@@ -155,6 +183,9 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
         // Force a reconnection
         socket.disconnect();
         socket.connect();
+
+        // Update the last player update time to avoid immediate retries
+        lastPlayerUpdate = Date.now();
       }
     }, 10000);
 
@@ -163,9 +194,19 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
       console.log(`✅ Connected to server: ${targetUrl}`);
       connectionState = "connected";
       lastPong = Date.now(); // Reset pong timer on connect
+      lastPlayerUpdate = Date.now(); // Reset player update timer
 
       // Reset batched updates
       resetBatchedUpdates();
+
+      // Reset reconnection attempts on successful connection
+      reconnectionAttempts = 0;
+
+      // Clear any reconnection timer
+      if (reconnectionTimer) {
+        clearTimeout(reconnectionTimer);
+        reconnectionTimer = null;
+      }
 
       // Emit connection state change event
       emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
@@ -184,13 +225,51 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
       emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
 
       // If not closed intentionally, try to reconnect after delay
-      if (reason === "io server disconnect" || reason === "transport close") {
-        setTimeout(() => {
-          if (socket && !socket.connected && isMultiplayerMode) {
-            console.log("🔄 Attempting to reconnect...");
-            socket.connect();
-          }
-        }, 3000);
+      if (
+        (reason === "io server disconnect" ||
+          reason === "transport close" ||
+          reason === "transport error") &&
+        isMultiplayerMode
+      ) {
+        // Increment reconnection attempts
+        reconnectionAttempts++;
+
+        // Calculate exponential backoff delay (1s, 2s, 4s, 8s, etc. up to 30s max)
+        const backoffDelay = Math.min(
+          Math.pow(2, reconnectionAttempts - 1) * 1000,
+          30000
+        );
+
+        if (reconnectionAttempts <= MAX_RECONNECTION_ATTEMPTS) {
+          console.log(
+            `🔄 Reconnection attempt ${reconnectionAttempts}/${MAX_RECONNECTION_ATTEMPTS} in ${
+              backoffDelay / 1000
+            }s`
+          );
+
+          reconnectionTimer = setTimeout(() => {
+            if (socket && !socket.connected && isMultiplayerMode) {
+              console.log(
+                `🔄 Attempting to reconnect (attempt ${reconnectionAttempts}/${MAX_RECONNECTION_ATTEMPTS})...`
+              );
+              try {
+                socket.connect();
+              } catch (e) {
+                console.error("Error during reconnection attempt:", e);
+              }
+            }
+          }, backoffDelay);
+        } else {
+          console.error(
+            `❌ Max reconnection attempts reached (${MAX_RECONNECTION_ATTEMPTS})`
+          );
+          // Notify the user they'll need to refresh or try again
+          emitEvent(EVENTS.CONNECTION_ERROR, {
+            type: "max_reconnects",
+            message:
+              "Maximum reconnection attempts reached. Please refresh the page.",
+          });
+        }
       }
     });
 
@@ -206,6 +285,9 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
       // Emit events
       emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
       emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
+
+      // Increment reconnection attempts
+      reconnectionAttempts++;
     });
 
     // Pong handler to update heartbeat
@@ -243,15 +325,19 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
 
     // Setup server status event handlers
     socket.on("serverStatus", (status) => {
+      // Timestamp for this status update to handle out-of-order updates
+      const now = Date.now();
       console.log("Server status update:", status);
 
       // Mark that we received a server status update
       serverStatus.online = true;
+      serverStatus.lastUpdate = now;
 
       // Convert legacy format if needed
       if (status.current_players !== undefined) {
         serverStatus = {
           online: true,
+          lastUpdate: now,
           currentPlayers: status.current_players,
           maxPlayers: status.max_players,
           queueLength: status.queue_length,
@@ -264,6 +350,7 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
         serverStatus = {
           ...status,
           online: true,
+          lastUpdate: now,
         };
       }
 
@@ -299,6 +386,9 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
 
     // Track received data for performance monitoring
     socket.on("players", (playersData) => {
+      // Update the last player update timestamp
+      lastPlayerUpdate = Date.now();
+
       // Approximate size calculation of the data
       const dataSize = JSON.stringify(playersData).length;
       trackNetworkTraffic(dataSize, "received");
@@ -316,11 +406,16 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
       // Keep the existing listeners calling approach
       if (existingListeners.length > 0) {
         existingListeners.forEach((listener) => {
-          listener(playersData);
+          try {
+            listener(playersData);
+          } catch (e) {
+            console.error("Error in player data listener:", e);
+          }
         });
       }
 
-      // Also trigger the event via the event system as a backup
+      // Also trigger the event via the event system for components listening
+      // This is a more reliable way to propagate the event to multiple components
       emitEvent(EVENTS.PLAYERS_UPDATE, playersData);
     });
 
@@ -336,6 +431,9 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
           socket.emit("requestServerStatus");
         } else if (isMultiplayerMode && connectionState !== "connecting") {
           // If we detect the socket is disconnected but we should be in multiplayer mode
+          console.log(
+            "Socket not connected in status interval, trying to reconnect"
+          );
           connectionState = "connecting";
           serverStatus.online = false;
           emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
@@ -343,7 +441,11 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
 
           // Try to reconnect
           if (socket) {
-            socket.connect();
+            try {
+              socket.connect();
+            } catch (e) {
+              console.error("Error during reconnection in status interval:", e);
+            }
           }
         }
       }, SERVER_STATUS_REFRESH_RATE);
@@ -364,6 +466,13 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
     connectionState = "disconnected";
     serverStatus.online = false;
     emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
+
+    // Emit a connection error event that the UI can respond to
+    emitEvent(EVENTS.CONNECTION_ERROR, {
+      type: "initialization",
+      message: "Failed to connect to the server. Please try again later.",
+    });
+
     return null;
   }
 };
@@ -514,6 +623,12 @@ export const isMultiplayer = () => isMultiplayerMode;
  * Disconnect socket
  */
 export const disconnectSocket = () => {
+  // Clear any reconnection timer
+  if (reconnectionTimer) {
+    clearTimeout(reconnectionTimer);
+    reconnectionTimer = null;
+  }
+
   if (socket) {
     if (isMultiplayerMode) {
       socket.disconnect();
@@ -760,18 +875,17 @@ export const getEstimatedWaitTime = (position) => {
  * @returns {boolean} True if server is online
  */
 export const isServerOnline = () => {
-  // Perform a more comprehensive check:
-  // 1. Check if the socket exists
-  // 2. Check if socket is connected
-  // 3. Check if we've received a server status update
-
+  // More comprehensive check with timestamp validation
   if (!socket) return false;
 
-  // We need both the socket to be connected AND to have received a server status update
-  const hasConnection = socket.connected === true;
-  const hasStatusUpdate = serverStatus.online === true;
+  // Socket must be connected and we must have received a status update recently (within last 30 seconds)
+  const connectedStatus = socket.connected === true;
+  const hasRecentStatus =
+    serverStatus.online === true &&
+    serverStatus.lastUpdate &&
+    Date.now() - serverStatus.lastUpdate < 30000;
 
-  return hasConnection && hasStatusUpdate;
+  return connectedStatus && hasRecentStatus;
 };
 
 /**

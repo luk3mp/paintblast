@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Sky, PointerLockControls } from "@react-three/drei";
 import io from "socket.io-client";
@@ -331,17 +331,45 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           const playerCount = Object.keys(data).length;
           console.log(`Player update contains ${playerCount} players`);
 
-          // Store player data directly - this contains all players including self
-          setPlayers(data);
+          // Safety check - never process null/undefined data
+          if (!data) {
+            console.error("Received null/undefined player data");
+            return;
+          }
 
-          // Notify other components about player update if needed
-          emitEvent(EVENTS.PLAYERS_UPDATE, data);
+          try {
+            // Store all players in state
+            setPlayers(data);
+
+            // Get our local player ID for later filtering
+            const localPlayerId = socketInstance.id;
+            console.log(`Local player ID: ${localPlayerId}`);
+
+            // Log all player IDs for debugging
+            Object.keys(data).forEach((id) => {
+              const player = data[id];
+              console.log(
+                `Player: ${player.name}, ID: ${id}, Team: ${player.team}`
+              );
+            });
+          } catch (e) {
+            console.error("Error processing player data:", e);
+          }
         }
       });
 
-      socketInstance.on("message", (message) => {
-        setMessages((prev) => [...prev, message]);
-      });
+      // Also listen for the backup event
+      const removePlayersUpdateListener = addEventListener(
+        EVENTS.PLAYERS_UPDATE,
+        (playersData) => {
+          // Only process if we didn't already get this data via direct socket event
+          if (playersData && typeof playersData === "object") {
+            console.log("Received player update via event system");
+            // We'll use the existing logic in the setPlayers function
+            setPlayers(playersData);
+          }
+        }
+      );
 
       // Join the game
       const assignedTeam = Math.random() < 0.5 ? "Red" : "Blue"; // Default team, server will override
@@ -384,8 +412,8 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           }
         }, 10000); // Request every 10 seconds
 
-        // Clean up the interval when component unmounts
-        return () => clearInterval(pingInterval);
+        // Store interval so we can clean it up
+        setPingIntervalRef(pingInterval);
       });
 
       // Set the socket state
@@ -401,9 +429,19 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
         removeFlagScoredListener();
         removeGameStartListener();
         removeGameOverListener();
+        removePlayersUpdateListener();
 
-        // We don't disconnect here because that would break the queue system
-        // The socket will be managed by the socket.js utility
+        // Clear ping interval if set
+        if (pingIntervalRef.current) {
+          clearInterval(pingIntervalRef.current);
+        }
+
+        // Remove socket event listeners
+        if (socketInstance) {
+          socketInstance.off("players");
+          socketInstance.off("message");
+          socketInstance.off("joinSuccess");
+        }
       };
     } else {
       // For single player, we use the mock socket from socket.js
@@ -432,6 +470,72 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
       };
     }
   }, [playerName, onGameEnd, isMultiplayer]);
+
+  // Add state for tracking the ping interval
+  const [pingIntervalRef] = useState({ current: null });
+
+  // Function to filter out the local player when rendering other players
+  const getRemotePlayers = useCallback(() => {
+    if (!socket || !players) return [];
+
+    // Get the local player ID
+    const localPlayerId = socket.id;
+    console.log(`Filtering remote players, local ID: ${localPlayerId}`);
+
+    // Filter out the local player and return only remote players
+    const remotePlayers = Object.entries(players).filter(
+      ([id]) => id !== localPlayerId
+    );
+
+    console.log(`Found ${remotePlayers.length} remote players`);
+    return remotePlayers.map(([id, player]) => ({ ...player, id }));
+  }, [socket, players]);
+
+  // Render remote players
+  const renderRemotePlayers = useCallback(() => {
+    // Get the filtered list of remote players
+    const remotePlayers = getRemotePlayers();
+
+    return remotePlayers.map((player) => {
+      if (!player) {
+        console.error("Encountered null player in renderRemotePlayers");
+        return null;
+      }
+
+      const { id, position, rotation, team, name } = player;
+      console.log(`Rendering remote player: ${name}, team: ${team}, id: ${id}`);
+
+      // Make sure we have valid position data
+      if (!position || position.length !== 3) {
+        console.error(`Invalid position for player ${name}: ${position}`);
+        return null;
+      }
+
+      return (
+        <Player
+          key={id}
+          isLocalPlayer={false}
+          position={position}
+          rotation={rotation || [0, 0, 0]}
+          name={name}
+          team={team}
+          useLowDetail={false}
+          isCarryingFlag={
+            (flagState.redFlagCarrier === name && team === "Blue") ||
+            (flagState.blueFlagCarrier === name && team === "Red")
+          }
+          carryingFlagTeam={
+            flagState.redFlagCarrier === name
+              ? "Red"
+              : flagState.blueFlagCarrier === name
+              ? "Blue"
+              : null
+          }
+          isEliminated={false}
+        />
+      );
+    });
+  }, [getRemotePlayers]);
 
   const sendMessage = (text) => {
     if (socket && text.trim()) {
@@ -1247,76 +1351,7 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
             isShooting={isShooting}
           />
 
-          {playerRef.current &&
-            socket &&
-            Object.entries(
-              // Use a helper function to ensure we only render players we should see
-              players || {}
-            )
-              .filter(([id]) => {
-                // Don't render ourselves (the local player)
-                const isLocalPlayer = socket && id === socket.id;
-
-                // For debugging - log any filtering issues
-                if (
-                  process.env.NODE_ENV === "development" &&
-                  id === socket.id
-                ) {
-                  console.log("Filtering out local player from render:", id);
-                }
-
-                return !isLocalPlayer;
-              })
-              .map(([id, player]) => {
-                if (!player || !player.position) {
-                  // Skip invalid players
-                  console.warn("Skipping player without valid data:", id);
-                  return null;
-                }
-
-                // Calculate distance to determine detail level
-                const playerPos = player.position || [0, 0, 0];
-                const localPos = playerRef.current.position || [0, 0, 0];
-                const dx = playerPos[0] - localPos[0];
-                const dy = playerPos[1] - localPos[1];
-                const dz = playerPos[2] - localPos[2];
-                const distanceSquared = dx * dx + dy * dy + dz * dz;
-                const useLowDetail =
-                  distanceSquared >
-                  getCurrentSettings().billboardDistance *
-                    getCurrentSettings().billboardDistance;
-
-                console.log(
-                  `Rendering other player: ${player.name} (${id}) - Team: ${player.team}`
-                );
-
-                // Now return the Player component with all needed props
-                return (
-                  <Player
-                    key={id}
-                    isLocalPlayer={false}
-                    position={player.position}
-                    rotation={player.rotation}
-                    name={player.name || `Player ${id.substring(0, 4)}`}
-                    team={player.team}
-                    useLowDetail={useLowDetail}
-                    isCarryingFlag={
-                      (flagState.redFlagCarrier === player.name &&
-                        player.team === "Blue") ||
-                      (flagState.blueFlagCarrier === player.name &&
-                        player.team === "Red")
-                    }
-                    carryingFlagTeam={
-                      flagState.redFlagCarrier === player.name
-                        ? "Red"
-                        : flagState.blueFlagCarrier === player.name
-                        ? "Blue"
-                        : null
-                    }
-                    isEliminated={player.is_eliminated || false}
-                  />
-                );
-              })}
+          {renderRemotePlayers()}
 
           {paintballs.map((paintball) => (
             <Paintball

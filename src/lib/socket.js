@@ -5,7 +5,7 @@
 
 import { io } from "socket.io-client";
 import {
-  SERVER_URL,
+  SERVER_URL as DEFAULT_SERVER_URL,
   DEBUG_MODE,
   MAX_PLAYERS,
   QUEUE_REFRESH_INTERVAL,
@@ -61,10 +61,10 @@ const throttle = (func, delay) => {
  * Connect to the Socket.IO server or initialize mock socket for single-player
  * @param {Object} options Connection options
  * @param {boolean} options.multiplayer Whether to use multiplayer mode
- * @param {string} options.url Server URL (defaults to config.SERVER_URL)
+ * @param {string} options.url Server URL (optional override, mainly for testing)
  * @returns {Object} The socket instance or mock socket for single-player
  */
-export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
+export const connectSocket = ({ multiplayer = false, url = null }) => {
   // Return existing socket if already connected
   if (socket) {
     return socket;
@@ -86,8 +86,16 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
     return socket;
   }
 
+  // Determine the actual URL to connect to
+  // Priority: function param -> environment variable -> config -> localhost fallback
+  const targetUrl =
+    url ||
+    process.env.NEXT_PUBLIC_SOCKET_URL ||
+    DEFAULT_SERVER_URL ||
+    "http://localhost:5000";
+
   // Multiplayer mode - connect to Socket.IO server
-  console.log(`🌐 Connecting to multiplayer server: ${url}`);
+  console.log(`🌐 Connecting to multiplayer server: ${targetUrl}`);
   connectionState = "connecting";
 
   // Emit connection state change event
@@ -98,6 +106,7 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       timeout: 10000,
+      transports: ["websocket"], // Explicitly set transport
     };
 
     // Add compression if enabled
@@ -111,11 +120,11 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
       };
     }
 
-    socket = io(url, socketOptions);
+    socket = io(targetUrl, socketOptions);
 
     // Setup connection event handlers
     socket.on("connect", () => {
-      console.log("✅ Connected to server");
+      console.log(`✅ Connected to server: ${targetUrl}`);
       connectionState = "connected";
 
       // Reset batched updates
@@ -129,7 +138,7 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
     });
 
     socket.on("disconnect", (reason) => {
-      console.log(`❌ Disconnected from server: ${reason}`);
+      console.log(`❌ Disconnected from server (${targetUrl}): ${reason}`);
       connectionState = "disconnected";
 
       // Emit connection state change event
@@ -137,7 +146,11 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
     });
 
     socket.on("connect_error", (error) => {
-      console.error("Connection error:", error);
+      console.error(
+        `❌ Connection error to ${targetUrl}:`,
+        error.message,
+        error.data || ""
+      );
       connectionState = "disconnected";
 
       // Emit connection state change event
@@ -245,7 +258,10 @@ export const connectSocket = ({ multiplayer = false, url = SERVER_URL }) => {
 
     return socket;
   } catch (error) {
-    console.error("Failed to initialize socket:", error);
+    console.error(
+      `❌ Failed to initialize socket connection to ${targetUrl}:`,
+      error
+    );
     connectionState = "disconnected";
     return null;
   }

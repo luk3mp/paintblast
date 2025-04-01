@@ -743,9 +743,18 @@ export const getEstimatedWaitTime = (position) => {
  * @returns {boolean} True if server is online
  */
 export const isServerOnline = () => {
-  // Check both our tracked online state and the socket connection
+  // Perform a more comprehensive check:
+  // 1. Check if the socket exists
+  // 2. Check if socket is connected
+  // 3. Check if we've received a server status update
+
   if (!socket) return false;
-  return serverStatus.online === true && socket.connected === true;
+
+  // We need both the socket to be connected AND to have received a server status update
+  const hasConnection = socket.connected === true;
+  const hasStatusUpdate = serverStatus.online === true;
+
+  return hasConnection && hasStatusUpdate;
 };
 
 /**

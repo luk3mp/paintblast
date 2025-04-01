@@ -356,6 +356,23 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           ...prev,
           team: data.team,
         }));
+
+        // After successful join, explicitly request server status again
+        // This helps update player counts on the server
+        socketInstance.emit("requestServerStatus");
+
+        // Set up a regular ping to keep connection alive and ensure
+        // server status stays updated
+        const pingInterval = setInterval(() => {
+          if (socketInstance && socketInstance.connected) {
+            socketInstance.emit("requestServerStatus");
+          } else {
+            clearInterval(pingInterval); // Clear if disconnected
+          }
+        }, 10000); // Request every 10 seconds
+
+        // Clean up the interval when component unmounts
+        return () => clearInterval(pingInterval);
       });
 
       // Set the socket state

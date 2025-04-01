@@ -67,8 +67,13 @@ const throttle = (func, delay) => {
  */
 export const connectSocket = ({ multiplayer = false, url = null }) => {
   // Return existing socket if already connected
-  if (socket) {
+  if (socket && socket.connected) {
     return socket;
+  }
+
+  // Disconnect existing socket if not connected properly
+  if (socket && !socket.connected) {
+    disconnectSocket();
   }
 
   isMultiplayerMode = multiplayer;
@@ -99,15 +104,27 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
   console.log(`🌐 Connecting to multiplayer server: ${targetUrl}`);
   connectionState = "connecting";
 
+  // Reset server status
+  serverStatus = {
+    currentPlayers: 0,
+    maxPlayers: MAX_PLAYERS,
+    queueLength: 0,
+    hasSpace: true,
+    online: false,
+  };
+
   // Emit connection state change event
   emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
+  emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
 
   try {
     const socketOptions = {
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10, // Increased from 5 to 10
       reconnectionDelay: 1000,
-      timeout: 10000,
-      transports: ["websocket"], // Explicitly set transport
+      reconnectionDelayMax: 5000, // Add max delay
+      timeout: 20000, // Increased from 10000
+      transports: ["websocket", "polling"], // Add polling as fallback
+      autoConnect: true,
     };
 
     // Add compression if enabled
@@ -123,10 +140,29 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
 
     socket = io(targetUrl, socketOptions);
 
+    // Set up ping-pong heartbeat to detect connection issues
+    let lastPong = Date.now();
+
+    const heartbeat = setInterval(() => {
+      // If we haven't received a pong in 30 seconds, assume connection is lost
+      if (Date.now() - lastPong > 30000 && connectionState === "connected") {
+        console.log("❌ Server heartbeat missed, reconnecting...");
+        connectionState = "connecting";
+        emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
+        emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
+        serverStatus.online = false;
+
+        // Force a reconnection
+        socket.disconnect();
+        socket.connect();
+      }
+    }, 10000);
+
     // Setup connection event handlers
     socket.on("connect", () => {
       console.log(`✅ Connected to server: ${targetUrl}`);
       connectionState = "connected";
+      lastPong = Date.now(); // Reset pong timer on connect
 
       // Reset batched updates
       resetBatchedUpdates();
@@ -141,9 +177,21 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
     socket.on("disconnect", (reason) => {
       console.log(`❌ Disconnected from server (${targetUrl}): ${reason}`);
       connectionState = "disconnected";
+      serverStatus.online = false;
 
-      // Emit connection state change event
+      // Emit events
       emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
+      emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
+
+      // If not closed intentionally, try to reconnect after delay
+      if (reason === "io server disconnect" || reason === "transport close") {
+        setTimeout(() => {
+          if (socket && !socket.connected && isMultiplayerMode) {
+            console.log("🔄 Attempting to reconnect...");
+            socket.connect();
+          }
+        }, 3000);
+      }
     });
 
     socket.on("connect_error", (error) => {
@@ -153,9 +201,16 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
         error.data || ""
       );
       connectionState = "disconnected";
+      serverStatus.online = false;
 
-      // Emit connection state change event
+      // Emit events
       emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
+      emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
+    });
+
+    // Pong handler to update heartbeat
+    socket.on("pong", () => {
+      lastPong = Date.now();
     });
 
     // Setup queue event handlers
@@ -212,7 +267,7 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
         };
       }
 
-      // Notify listeners of server status update
+      // Notify listeners of server status changes
       emitEvent(EVENTS.SERVER_STATUS_CHANGE, true);
       emitEvent(EVENTS.SERVER_STATUS_UPDATE, serverStatus);
     });
@@ -259,11 +314,28 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
 
     // Set up a timer to regularly request server status updates
     if (multiplayer) {
-      setInterval(() => {
+      const statusInterval = setInterval(() => {
         if (socket && socket.connected) {
           socket.emit("requestServerStatus");
+        } else if (isMultiplayerMode && connectionState !== "connecting") {
+          // If we detect the socket is disconnected but we should be in multiplayer mode
+          connectionState = "connecting";
+          serverStatus.online = false;
+          emitEvent(EVENTS.CONNECTION_STATE_CHANGE, { state: connectionState });
+          emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
+
+          // Try to reconnect
+          if (socket) {
+            socket.connect();
+          }
         }
       }, SERVER_STATUS_REFRESH_RATE);
+
+      // Clean up on disconnect
+      socket.on("disconnect", () => {
+        clearInterval(statusInterval);
+        clearInterval(heartbeat);
+      });
     }
 
     return socket;
@@ -273,6 +345,8 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
       error
     );
     connectionState = "disconnected";
+    serverStatus.online = false;
+    emitEvent(EVENTS.SERVER_STATUS_CHANGE, false);
     return null;
   }
 };
@@ -668,7 +742,11 @@ export const getEstimatedWaitTime = (position) => {
  * Check if server is online (has sent status updates)
  * @returns {boolean} True if server is online
  */
-export const isServerOnline = () => serverStatus.online === true;
+export const isServerOnline = () => {
+  // Check both our tracked online state and the socket connection
+  if (!socket) return false;
+  return serverStatus.online === true && socket.connected === true;
+};
 
 /**
  * Update requirements.txt file to include the additional dependencies needed

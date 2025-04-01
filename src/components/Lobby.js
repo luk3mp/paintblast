@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import styles from "../styles/Lobby.module.css";
 import {
   getServerStatus,
@@ -19,20 +19,51 @@ export default function Lobby({ onJoinGame }) {
   const [multiplayerEnabled, setMultiplayerEnabled] = useState(IS_MULTIPLAYER);
   const [connectionState, setConnectionState] = useState(getConnectionState());
   const [isServerUp, setIsServerUp] = useState(isServerOnline());
+  const [connectionAttempts, setConnectionAttempts] = useState(0);
+
+  // Memoized function to connect to server
+  const connectToServer = useCallback(() => {
+    setIsConnecting(true);
+    setError("");
+
+    try {
+      // Connect to the socket server
+      const socket = connectSocket({ multiplayer: true });
+
+      if (socket) {
+        // Request server status immediately
+        socket.emit("requestServerStatus");
+
+        // Start a timeout to check connection status
+        const statusCheckTimeout = setTimeout(() => {
+          if (!isServerOnline()) {
+            console.log("Server connection timeout - status still offline");
+            setIsServerUp(false);
+            // Keep connecting state for visual feedback
+            setIsConnecting(false);
+          }
+        }, 5000);
+
+        return () => clearTimeout(statusCheckTimeout);
+      }
+    } catch (err) {
+      console.error("Error connecting to server:", err);
+      setError("Connection error. Please try again.");
+      setIsConnecting(false);
+    }
+  }, []);
 
   // Initialize socket connection on component mount
   useEffect(() => {
     if (multiplayerEnabled) {
-      // Connect to the socket server if multiplayer is enabled
-      connectSocket({ multiplayer: true });
-
-      // Request server status immediately
-      const socket = getSocket();
-      if (socket) {
-        socket.emit("requestServerStatus");
-      }
+      connectToServer();
     }
-  }, []);
+
+    // Cleanup function
+    return () => {
+      // Component cleanup can go here if needed
+    };
+  }, [multiplayerEnabled, connectToServer]);
 
   // Listen for server status updates and connection state changes
   useEffect(() => {
@@ -42,6 +73,7 @@ export default function Lobby({ onJoinGame }) {
       (data) => {
         setServerStats(data);
         setIsServerUp(true);
+        setIsConnecting(false);
       }
     );
 
@@ -49,7 +81,18 @@ export default function Lobby({ onJoinGame }) {
     const removeServerStatusChangeListener = addEventListener(
       EVENTS.SERVER_STATUS_CHANGE,
       (isOnline) => {
+        console.log("Server status changed:", isOnline);
         setIsServerUp(isOnline);
+
+        if (!isOnline && multiplayerEnabled) {
+          // If server went offline and we're in multiplayer mode
+          setConnectionAttempts((prev) => prev + 1);
+
+          // Only show connecting indicator if we're actively trying to reconnect
+          if (connectionState === "connecting") {
+            setIsConnecting(true);
+          }
+        }
       }
     );
 
@@ -57,11 +100,14 @@ export default function Lobby({ onJoinGame }) {
     const removeConnectionListener = addEventListener(
       EVENTS.CONNECTION_STATE_CHANGE,
       (data) => {
+        console.log("Connection state changed:", data.state);
         setConnectionState(data.state);
 
         // If connection established, remove connecting state
         if (data.state === "connected") {
           setIsConnecting(false);
+        } else if (data.state === "connecting") {
+          setIsConnecting(true);
         }
 
         // If connection failed, show error and switch to single-player
@@ -80,13 +126,39 @@ export default function Lobby({ onJoinGame }) {
       removeConnectionListener();
       removeServerStatusChangeListener();
     };
-  }, [multiplayerEnabled]);
+  }, [multiplayerEnabled, connectionState]);
+
+  // Effect to retry connection when it fails
+  useEffect(() => {
+    if (
+      connectionAttempts > 0 &&
+      connectionAttempts < 3 &&
+      multiplayerEnabled &&
+      !isServerUp
+    ) {
+      // Wait a bit, then try to reconnect
+      const reconnectTimer = setTimeout(() => {
+        console.log(`Reconnection attempt ${connectionAttempts}...`);
+        connectToServer();
+      }, 3000); // Wait 3 seconds between attempts
+
+      return () => clearTimeout(reconnectTimer);
+    }
+  }, [connectionAttempts, multiplayerEnabled, isServerUp, connectToServer]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
 
     if (!name.trim()) {
       setError("Please enter a name");
+      return;
+    }
+
+    // Check connection status before proceeding
+    if (multiplayerEnabled && !isServerUp) {
+      setError(
+        "Server is currently offline. Try single-player mode or wait for server to come back online."
+      );
       return;
     }
 
@@ -103,6 +175,8 @@ export default function Lobby({ onJoinGame }) {
     if (!multiplayerEnabled) {
       // Switching to multiplayer
       setMultiplayerEnabled(true);
+      // Reset connection attempts when manually toggling
+      setConnectionAttempts(0);
     } else {
       // Switching to single-player
       setMultiplayerEnabled(false);
@@ -158,23 +232,26 @@ export default function Lobby({ onJoinGame }) {
                 ></div>
                 <span>Server Status: {isServerUp ? "Online" : "Offline"}</span>
               </div>
-              <div className={styles.playerCount}>
-                <span>
-                  Players: {serverStats.currentPlayers}/{serverStats.maxPlayers}
-                </span>
-                {serverStats.queueLength > 0 && (
-                  <span className={styles.queueInfo}>
-                    ({serverStats.queueLength} in queue)
+              {isServerUp && (
+                <div className={styles.playerCount}>
+                  <span>
+                    Players: {serverStats.currentPlayers}/
+                    {serverStats.maxPlayers}
                   </span>
-                )}
-              </div>
+                  {serverStats.queueLength > 0 && (
+                    <span className={styles.queueInfo}>
+                      ({serverStats.queueLength} in queue)
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           <button
             type="submit"
             className={styles.button}
-            disabled={isConnecting}
+            disabled={isConnecting || (multiplayerEnabled && !isServerUp)}
           >
             {multiplayerEnabled ? "Join Multiplayer" : "Play Solo"}
           </button>

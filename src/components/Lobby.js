@@ -55,30 +55,6 @@ export default function Lobby({ onJoinGame }) {
     };
   }, [multiplayerEnabled]);
 
-  // Initialize socket connection for multiplayer
-  useEffect(() => {
-    if (multiplayerEnabled && !isMultiplayer()) {
-      setIsConnecting(true);
-      connectSocket({
-        multiplayer: true,
-        url: SERVER_URL,
-      });
-
-      // Set a fallback timeout in case the connection event never fires
-      const connectionTimer = setTimeout(() => {
-        if (getConnectionState() !== "connected") {
-          setError(
-            "Could not connect to server. Playing in single-player mode."
-          );
-          setMultiplayerEnabled(false);
-        }
-        setIsConnecting(false);
-      }, 5000);
-
-      return () => clearTimeout(connectionTimer);
-    }
-  }, [multiplayerEnabled]);
-
   const handleSubmit = (e) => {
     e.preventDefault();
 

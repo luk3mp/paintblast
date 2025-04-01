@@ -208,6 +208,8 @@ const HUD = memo(
     },
     performanceInfo = null,
     showPerformance = false,
+    isRespawning = false,
+    respawnCountdown = 0,
   }) => {
     const [isChatting, setIsChatting] = useState(false);
     const [serverStatus, setServerStatus] = useState(getServerStatus());
@@ -259,6 +261,13 @@ const HUD = memo(
 
     return (
       <div className={styles.hud}>
+        {/* Respawn Indicator */}
+        {isRespawning && (
+          <div className={styles.respawnIndicator}>
+            RESPAWNING IN {respawnCountdown}
+          </div>
+        )}
+
         <div className={styles.bottomRight}>
           <div className={styles.ammoDisplay}>
             <div className={styles.magazine}>
@@ -295,7 +304,13 @@ const HUD = memo(
           )}
 
           <div className={styles.score}>
-            {stats.redScore} - {stats.blueScore}
+            <span style={{ color: "red" }}>{stats.redScore}</span> -{" "}
+            <span style={{ color: "blue" }}>{stats.blueScore}</span>
+          </div>
+
+          {/* Simple K/D Display */}
+          <div className={styles.kdStats}>
+            K: {stats.kills || 0} / D: {stats.deaths || 0}
           </div>
 
           {/* Performance display */}

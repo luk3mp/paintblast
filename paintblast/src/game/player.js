@@ -49,6 +49,7 @@ const Player = forwardRef(
       isReloading = false,
       reloadProgress = 0,
       isShooting = false, // Use this prop from parent instead of local state
+      isRespawning = false, // Add isRespawning prop
     },
     ref
   ) => {
@@ -875,6 +876,22 @@ const Player = forwardRef(
               });
             }
           }
+        }
+
+        // Check if the player is respawning
+        if (isRespawning) {
+          // Optional: Ensure velocity is zeroed out while respawning
+          if (
+            playerRef.current.linvel &&
+            (playerRef.current.linvel().x !== 0 ||
+              playerRef.current.linvel().z !== 0)
+          ) {
+            playerRef.current.setLinvel(
+              { x: 0, y: playerRef.current.linvel().y, z: 0 },
+              true
+            );
+          }
+          return; // Skip all movement/action updates if respawning
         }
       }
 

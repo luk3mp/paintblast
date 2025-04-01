@@ -384,11 +384,11 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
       setSocket(mockSocket);
 
       // Random team assignment
-      const assignedTeam = Math.random() < 0.5 ? "Red" : "Blue";
-      setPlayerTeam(assignedTeam);
+      const singlePlayerAssignedTeam = Math.random() < 0.5 ? "Red" : "Blue";
+      setPlayerTeam(singlePlayerAssignedTeam);
       setGameStats((prev) => ({
         ...prev,
-        team: assignedTeam,
+        team: singlePlayerAssignedTeam,
       }));
 
       // Handle single player messages

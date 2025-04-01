@@ -3,10 +3,10 @@
  */
 
 // Server connection settings
-export const SERVER_URL = "http://localhost:8000";
+export const SERVER_URL = "https://paintblast-server.onrender.com";
 
 // Game mode settings
-export const IS_MULTIPLAYER = false; // Default to single player mode
+export const IS_MULTIPLAYER = true; // Default to multiplayer mode
 export const AUTO_CONNECT_TO_BEST_SERVER = false;
 
 // Lobby and queue settings

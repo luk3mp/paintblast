@@ -10,6 +10,7 @@ export const EVENTS = {
   QUEUE_UPDATE: "queueUpdate",
   QUEUE_READY: "queueReady",
   SERVER_STATUS_UPDATE: "serverStatusUpdate",
+  SERVER_STATUS_CHANGE: "serverStatusChange",
   CONNECTION_STATE_CHANGE: "connectionStateChange",
   GAME_START: "gameStart",
   GAME_END: "gameEnd",

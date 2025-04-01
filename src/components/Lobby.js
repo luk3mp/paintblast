@@ -5,6 +5,8 @@ import {
   connectSocket,
   isMultiplayer,
   getConnectionState,
+  isServerOnline,
+  getSocket,
 } from "../lib/socket";
 import { IS_MULTIPLAYER, SERVER_URL } from "../lib/config";
 import { EVENTS, addEventListener } from "../lib/events";
@@ -16,6 +18,21 @@ export default function Lobby({ onJoinGame }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [multiplayerEnabled, setMultiplayerEnabled] = useState(IS_MULTIPLAYER);
   const [connectionState, setConnectionState] = useState(getConnectionState());
+  const [isServerUp, setIsServerUp] = useState(isServerOnline());
+
+  // Initialize socket connection on component mount
+  useEffect(() => {
+    if (multiplayerEnabled) {
+      // Connect to the socket server if multiplayer is enabled
+      connectSocket({ multiplayer: true });
+
+      // Request server status immediately
+      const socket = getSocket();
+      if (socket) {
+        socket.emit("requestServerStatus");
+      }
+    }
+  }, []);
 
   // Listen for server status updates and connection state changes
   useEffect(() => {
@@ -24,6 +41,15 @@ export default function Lobby({ onJoinGame }) {
       EVENTS.SERVER_STATUS_UPDATE,
       (data) => {
         setServerStats(data);
+        setIsServerUp(true);
+      }
+    );
+
+    // Handle server status change events
+    const removeServerStatusChangeListener = addEventListener(
+      EVENTS.SERVER_STATUS_CHANGE,
+      (isOnline) => {
+        setIsServerUp(isOnline);
       }
     );
 
@@ -52,6 +78,7 @@ export default function Lobby({ onJoinGame }) {
     return () => {
       removeStatusListener();
       removeConnectionListener();
+      removeServerStatusChangeListener();
     };
   }, [multiplayerEnabled]);
 
@@ -126,15 +153,10 @@ export default function Lobby({ onJoinGame }) {
               <div className={styles.statusIndicator}>
                 <div
                   className={`${styles.indicator} ${
-                    connectionState === "connected"
-                      ? styles.connected
-                      : styles.disconnected
+                    isServerUp ? styles.connected : styles.disconnected
                   }`}
                 ></div>
-                <span>
-                  Server Status:{" "}
-                  {connectionState === "connected" ? "Online" : "Offline"}
-                </span>
+                <span>Server Status: {isServerUp ? "Online" : "Offline"}</span>
               </div>
               <div className={styles.playerCount}>
                 <span>

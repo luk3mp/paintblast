@@ -30,6 +30,7 @@ let serverStatus = {
   maxPlayers: MAX_PLAYERS,
   queueLength: 0,
   hasSpace: true,
+  online: false,
 };
 
 // Event listeners
@@ -189,9 +190,13 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
     socket.on("serverStatus", (status) => {
       console.log("Server status update:", status);
 
+      // Mark that we received a server status update
+      serverStatus.online = true;
+
       // Convert legacy format if needed
       if (status.current_players !== undefined) {
         serverStatus = {
+          online: true,
           currentPlayers: status.current_players,
           maxPlayers: status.max_players,
           queueLength: status.queue_length,
@@ -200,10 +205,15 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
           blueTeamPlayers: status.blueTeamPlayers || 0,
         };
       } else {
-        serverStatus = status;
+        // Maintain the online state
+        serverStatus = {
+          ...status,
+          online: true,
+        };
       }
 
       // Notify listeners of server status update
+      emitEvent(EVENTS.SERVER_STATUS_CHANGE, true);
       emitEvent(EVENTS.SERVER_STATUS_UPDATE, serverStatus);
     });
 
@@ -653,6 +663,12 @@ export const getEstimatedWaitTime = (position) => {
     return `~${minutes} minute${minutes === 1 ? "" : "s"}`;
   }
 };
+
+/**
+ * Check if server is online (has sent status updates)
+ * @returns {boolean} True if server is online
+ */
+export const isServerOnline = () => serverStatus.online === true;
 
 /**
  * Update requirements.txt file to include the additional dependencies needed

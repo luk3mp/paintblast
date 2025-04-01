@@ -303,8 +303,25 @@ export const connectSocket = ({ multiplayer = false, url = null }) => {
       const dataSize = JSON.stringify(playersData).length;
       trackNetworkTraffic(dataSize, "received");
 
+      // Log player data - add debugging
+      const playerCount = Object.keys(playersData).length;
+      console.log(
+        `[socket.js] Received players data with ${playerCount} players.`
+      );
+
+      // Store any existing listeners we need to forward to
+      const existingListeners = listeners["players"] || [];
+
       // Process the received data (filtered in Game component)
-      triggerMockEvent("players", playersData);
+      // Keep the existing listeners calling approach
+      if (existingListeners.length > 0) {
+        existingListeners.forEach((listener) => {
+          listener(playersData);
+        });
+      }
+
+      // Also trigger the event via the event system as a backup
+      emitEvent(EVENTS.PLAYERS_UPDATE, playersData);
     });
 
     // Set up batch update processing if enabled

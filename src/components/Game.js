@@ -323,7 +323,20 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
 
       // Set up direct socket event listeners
       socketInstance.on("players", (data) => {
-        setPlayers(data);
+        console.log("Received player update:", data);
+
+        // Make sure we don't lose our own player data and properly track others
+        if (data && typeof data === "object") {
+          // Log the number of players for debugging
+          const playerCount = Object.keys(data).length;
+          console.log(`Player update contains ${playerCount} players`);
+
+          // Store player data directly - this contains all players including self
+          setPlayers(data);
+
+          // Notify other components about player update if needed
+          emitEvent(EVENTS.PLAYERS_UPDATE, data);
+        }
       });
 
       socketInstance.on("message", (message) => {
@@ -1237,13 +1250,30 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           {playerRef.current &&
             socket &&
             Object.entries(
-              getPlayersToRender(
-                players,
-                playerRef.current.position || [0, 0, 0]
-              )
+              // Use a helper function to ensure we only render players we should see
+              players || {}
             )
-              .filter(([id]) => id !== socket.id)
+              .filter(([id]) => {
+                // Don't render ourselves (the local player)
+                const isLocalPlayer = socket && id === socket.id;
+
+                // For debugging - log any filtering issues
+                if (
+                  process.env.NODE_ENV === "development" &&
+                  id === socket.id
+                ) {
+                  console.log("Filtering out local player from render:", id);
+                }
+
+                return !isLocalPlayer;
+              })
               .map(([id, player]) => {
+                if (!player || !player.position) {
+                  // Skip invalid players
+                  console.warn("Skipping player without valid data:", id);
+                  return null;
+                }
+
                 // Calculate distance to determine detail level
                 const playerPos = player.position || [0, 0, 0];
                 const localPos = playerRef.current.position || [0, 0, 0];
@@ -1255,6 +1285,10 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
                   distanceSquared >
                   getCurrentSettings().billboardDistance *
                     getCurrentSettings().billboardDistance;
+
+                console.log(
+                  `Rendering other player: ${player.name} (${id}) - Team: ${player.team}`
+                );
 
                 // Now return the Player component with all needed props
                 return (

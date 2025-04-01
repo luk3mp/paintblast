@@ -18,6 +18,7 @@ export const EVENTS = {
   FLAG_CAPTURED: "flagCaptured",
   FLAG_RETURNED: "flagReturned",
   FLAG_SCORED: "flagScored",
+  PLAYERS_UPDATE: "playersUpdate",
 };
 
 /**

@@ -338,23 +338,49 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           }
 
           try {
-            // Store all players in state
-            setPlayers(data);
+            // Store all players in state - IMPORTANT: We must set this even if empty
+            // to ensure the player list is properly updated when players leave
+            setPlayers((prevPlayers) => {
+              // If we somehow got an empty object but had players before,
+              // log this unusual situation
+              if (
+                Object.keys(data).length === 0 &&
+                Object.keys(prevPlayers).length > 0
+              ) {
+                console.warn(
+                  "Received empty player list but had players before"
+                );
+              }
+              return data;
+            });
 
             // Get our local player ID for later filtering
             const localPlayerId = socketInstance.id;
-            console.log(`Local player ID: ${localPlayerId}`);
+
+            // Update debug display with player count
+            setDebugInfo((prev) => ({
+              ...prev,
+              playerCount: Object.keys(data).length,
+              socketConnected: true,
+            }));
 
             // Log all player IDs for debugging
-            Object.keys(data).forEach((id) => {
-              const player = data[id];
-              console.log(
-                `Player: ${player.name}, ID: ${id}, Team: ${player.team}`
-              );
-            });
+            if (Object.keys(data).length > 0) {
+              console.log(`Local player ID: ${localPlayerId}`);
+              Object.keys(data).forEach((id) => {
+                const player = data[id];
+                console.log(
+                  `Player in game: ${player.name}, ID: ${id}, Team: ${player.team}`
+                );
+              });
+            } else {
+              console.log("No players in the received update");
+            }
           } catch (e) {
             console.error("Error processing player data:", e);
           }
+        } else {
+          console.error("Received invalid player data format:", data);
         }
       });
 
@@ -365,8 +391,17 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           // Only process if we didn't already get this data via direct socket event
           if (playersData && typeof playersData === "object") {
             console.log("Received player update via event system");
-            // We'll use the existing logic in the setPlayers function
+            // Apply the same safe handling logic as above
             setPlayers(playersData);
+            setDebugInfo((prev) => ({
+              ...prev,
+              playerCount: Object.keys(playersData).length,
+              socketConnected: true,
+            }));
+          } else {
+            console.warn(
+              "Received invalid data format from PLAYERS_UPDATE event"
+            );
           }
         }
       );
@@ -476,66 +511,111 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
 
   // Function to filter out the local player when rendering other players
   const getRemotePlayers = useCallback(() => {
-    if (!socket || !players) return [];
+    if (!socket) {
+      console.log("No socket connection, can't get remote players");
+      return [];
+    }
+
+    if (!players || typeof players !== "object") {
+      console.log("No valid players object available");
+      return [];
+    }
 
     // Get the local player ID
     const localPlayerId = socket.id;
-    console.log(`Filtering remote players, local ID: ${localPlayerId}`);
 
-    // Filter out the local player and return only remote players
-    const remotePlayers = Object.entries(players).filter(
-      ([id]) => id !== localPlayerId
-    );
+    if (!localPlayerId) {
+      console.warn(
+        "Socket ID is missing, remote player filtering may be incorrect"
+      );
+    }
 
-    console.log(`Found ${remotePlayers.length} remote players`);
-    return remotePlayers.map(([id, player]) => ({ ...player, id }));
+    try {
+      // Filter out the local player and return only remote players
+      const remotePlayers = Object.entries(players).filter(
+        ([id]) => id !== localPlayerId
+      );
+
+      console.log(`Found ${remotePlayers.length} remote players`);
+      return remotePlayers
+        .map(([id, player]) => {
+          if (!player) {
+            console.warn(`Player with ID ${id} has no data`);
+            return null;
+          }
+          return { ...player, id };
+        })
+        .filter(Boolean); // Remove any null entries
+    } catch (err) {
+      console.error("Error getting remote players:", err);
+      return [];
+    }
   }, [socket, players]);
 
   // Render remote players
   const renderRemotePlayers = useCallback(() => {
-    // Get the filtered list of remote players
-    const remotePlayers = getRemotePlayers();
+    try {
+      // Get the filtered list of remote players
+      const remotePlayers = getRemotePlayers();
 
-    return remotePlayers.map((player) => {
-      if (!player) {
-        console.error("Encountered null player in renderRemotePlayers");
+      if (!remotePlayers || remotePlayers.length === 0) {
+        console.log("No remote players to render");
         return null;
       }
 
-      const { id, position, rotation, team, name } = player;
-      console.log(`Rendering remote player: ${name}, team: ${team}, id: ${id}`);
+      return remotePlayers.map((player) => {
+        if (!player) {
+          console.error("Encountered null player in renderRemotePlayers");
+          return null;
+        }
 
-      // Make sure we have valid position data
-      if (!position || position.length !== 3) {
-        console.error(`Invalid position for player ${name}: ${position}`);
-        return null;
-      }
+        const { id, position, rotation, team, name } = player;
 
-      return (
-        <Player
-          key={id}
-          isLocalPlayer={false}
-          position={position}
-          rotation={rotation || [0, 0, 0]}
-          name={name}
-          team={team}
-          useLowDetail={false}
-          isCarryingFlag={
-            (flagState.redFlagCarrier === name && team === "Blue") ||
-            (flagState.blueFlagCarrier === name && team === "Red")
-          }
-          carryingFlagTeam={
-            flagState.redFlagCarrier === name
-              ? "Red"
-              : flagState.blueFlagCarrier === name
-              ? "Blue"
-              : null
-          }
-          isEliminated={false}
-        />
-      );
-    });
-  }, [getRemotePlayers]);
+        if (!id || !name) {
+          console.error("Player missing required data:", player);
+          return null;
+        }
+
+        // Make sure we have valid position data
+        if (!position || !Array.isArray(position) || position.length !== 3) {
+          console.error(
+            `Invalid position for player ${name}: ${JSON.stringify(position)}`
+          );
+          return null;
+        }
+
+        // Make sure team is valid
+        const validTeam = team === "Red" || team === "Blue" ? team : "Red";
+
+        return (
+          <Player
+            key={id}
+            isLocalPlayer={false}
+            position={position}
+            rotation={rotation || [0, 0, 0]}
+            name={name}
+            team={validTeam}
+            useLowDetail={performanceLevel === "low"}
+            isCarryingFlag={
+              (flagState.redFlagCarrier === name && validTeam === "Blue") ||
+              (flagState.blueFlagCarrier === name && validTeam === "Red")
+            }
+            carryingFlagTeam={
+              flagState.redFlagCarrier === name
+                ? "Red"
+                : flagState.blueFlagCarrier === name
+                ? "Blue"
+                : null
+            }
+            isEliminated={player.is_eliminated || false}
+          />
+        );
+      });
+    } catch (err) {
+      console.error("Error rendering remote players:", err);
+      return null;
+    }
+  }, [getRemotePlayers, flagState, performanceLevel]);
 
   const sendMessage = (text) => {
     if (socket && text.trim()) {

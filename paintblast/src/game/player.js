@@ -10,7 +10,6 @@ import { Vector3, Quaternion, Euler } from "three";
 import { RigidBody, CapsuleCollider, useRapier } from "@react-three/rapier";
 import { useKeyboardControls } from "../hooks/useKeyboardControls";
 import CharacterModel from "./models/CharacterModel";
-import FirstPersonGun from "./models/FirstPersonGun";
 
 // Movement constants
 const SPEED = 500.0; // Force-based movement needs higher values
@@ -1248,9 +1247,11 @@ const Player = forwardRef(
     };
 
     const shoot = () => {
+      const effectiveIsReloading = isReloading; // Use prop directly if passed down
+
       if (
         effectiveIsReloading ||
-        maxJumpHeight.current > 0 ||
+        maxJumpHeight.current > 0 || // Check if currently jumping high
         lastShotTime.current + FIRE_RATE > Date.now() ||
         !ammoAvailable()
       ) {
@@ -1264,7 +1265,6 @@ const Player = forwardRef(
         return false;
       }
 
-      // Make sure we're ready to shoot - need playerRef and camera
       if (!camera) {
         console.warn("Cannot shoot: camera not available");
         return false;
@@ -1273,65 +1273,51 @@ const Player = forwardRef(
       lastShotTime.current = Date.now();
       console.log("Shooting...");
 
-      // Set internal shooting state if not controlled by props
-      if (!effectiveIsShooting) {
+      // Trigger internal shooting state for potential local feedback/sounds
+      if (!isShooting) {
+        // Check the prop passed from Game.js
         setIsShooting_internal(true);
         setTimeout(() => setIsShooting_internal(false), 100);
       }
 
       if (onShoot) {
-        // Get current position - for local player, use camera position for more accurate shooting
-        let position;
+        // --- Calculate Trajectory (Center Screen) ---
+        const directionVector = new Vector3();
+        camera.getWorldDirection(directionVector); // Get camera's forward direction
+        directionVector.normalize();
+        const direction = [
+          directionVector.x,
+          directionVector.y,
+          directionVector.z,
+        ];
+        console.log("Shot direction (Camera Dir):", direction);
+
+        // --- Calculate Visual Origin (Right Shoulder) ---
+        const originVector = new Vector3();
+        camera.getWorldPosition(originVector); // Start at camera position
+
+        // Get camera's right and down vectors from its world matrix
+        const right = new Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+        const down = new Vector3()
+          .setFromMatrixColumn(camera.matrixWorld, 1)
+          .negate(); // Up is column 1, so negate for down
+
+        // Define shoulder offset relative to camera center
+        const shoulderOffsetRight = 0.3; // How far to the right
+        const shoulderOffsetDown = 0.1; // How far down
+        const shoulderOffsetForward = 0.1; // Slightly in front of camera to avoid clipping
+
+        // Apply offsets
+        originVector.addScaledVector(right, shoulderOffsetRight);
+        originVector.addScaledVector(down, shoulderOffsetDown);
+        originVector.addScaledVector(directionVector, shoulderOffsetForward); // Offset along the view direction
+
+        const visualOrigin = [originVector.x, originVector.y, originVector.z];
+        console.log("Visual shot origin (Shoulder):", visualOrigin);
 
         try {
-          if (isLocalPlayer && camera) {
-            // For local player, use the camera position for more accurate shooting
-            position = [
-              camera.position.x,
-              camera.position.y,
-              camera.position.z,
-            ];
-            console.log("Using camera position for shot:", position);
-          } else if (
-            playerRef.current &&
-            typeof playerRef.current.translation === "function"
-          ) {
-            // For remote players with rigid body, use the rigid body position
-            const translation = playerRef.current.translation();
-            position = [translation.x, translation.y, translation.z];
-            console.log("Using RigidBody position for shot:", position);
-          } else {
-            // Fallback to playerPosition state
-            position = [playerPosition.x, playerPosition.y, playerPosition.z];
-            console.log("Using playerPosition state for shot:", position);
-          }
-        } catch (error) {
-          console.error("Error getting position for shot:", error);
-          // Fall back to playerPosition state in case of any error
-          position = [playerPosition.x, playerPosition.y, playerPosition.z];
-          console.log(
-            "Fallback: Using playerPosition state for shot:",
-            position
-          );
-        }
-
-        // Get camera direction
-        const cameraDirection = new Vector3();
-        camera.getWorldDirection(cameraDirection);
-        cameraDirection.normalize();
-        console.log("Camera direction for shot:", [
-          cameraDirection.x,
-          cameraDirection.y,
-          cameraDirection.z,
-        ]);
-
-        try {
-          // Call the parent's onShoot callback
-          onShoot(position, [
-            cameraDirection.x,
-            cameraDirection.y,
-            cameraDirection.z,
-          ]);
+          // Pass the calculated VISUAL origin and the CENTERED direction
+          onShoot(visualOrigin, direction);
           console.log("Shot fired successfully!");
           return true;
         } catch (error) {
@@ -1464,14 +1450,6 @@ const Player = forwardRef(
                 transparent
               />
             </mesh>
-
-            {/* First person gun model visible to the local player */}
-            <FirstPersonGun
-              team={team}
-              isShooting={effectiveIsShooting}
-              isReloading={effectiveIsReloading}
-              reloadProgress={effectiveReloadProgress}
-            />
           </RigidBody>
         ) : (
           // Remote player with character model and name tag
@@ -1488,6 +1466,8 @@ const Player = forwardRef(
               isCarryingFlag={isCarryingFlag}
               carryingFlagTeam={carryingFlagTeam}
               useLowDetail={useLowDetail}
+              isShooting={isShooting} // Pass state for potential animations
+              isReloading={isReloading}
             />
           </group>
         )}

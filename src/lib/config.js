@@ -2,7 +2,7 @@
  * Global configuration settings for PaintBlast
  */
 
-// Server connection settings
+// Server connection settings - Updated for Render deployment
 export const SERVER_URL = "https://paintblast-server.onrender.com";
 
 // Game mode settings

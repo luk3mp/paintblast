@@ -1474,14 +1474,8 @@ const Player = forwardRef(
       <>
         {isLocalPlayer ? (
           <>
-            {/* First-person gun - follows camera each frame */}
-            <FirstPersonGun
-              ref={fpGunRef}
-              team={team}
-              isShooting={effectiveIsShooting}
-              isReloading={effectiveIsReloading}
-              reloadProgress={effectiveReloadProgress}
-            />
+            {/* First-person gun — portaled into the camera (zero-lag) */}
+            <FirstPersonGun ref={fpGunRef} team={team} />
 
             {/* Local player with physics */}
             <RigidBody

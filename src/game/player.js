@@ -1221,9 +1221,9 @@ const Player = forwardRef(
     // Check if player is near a refill station
     const [nearRefillStation, setNearRefillStation] = useState(false);
 
-    // Update player movement and actions
+    // Update player movement and actions (local player only)
     useFrame((state, delta) => {
-      if (!playerRef.current) return;
+      if (!isLocalPlayer || !playerRef.current) return;
 
       // Get current position and rotation
       const position = playerRef.current.translation();
@@ -1363,15 +1363,15 @@ const Player = forwardRef(
       };
     }, []);
 
-    // Track rigid body initialization
+    // Track rigid body initialization (local player only)
     useEffect(() => {
-      if (playerRef.current) {
+      if (isLocalPlayer && playerRef.current && typeof playerRef.current.translation === "function") {
         console.log(
           "RigidBody initialized, position:",
           playerRef.current.translation()
         );
       }
-    }, [playerRef.current]);
+    }, [playerRef.current, isLocalPlayer]);
 
     useEffect(() => {
       console.log(

@@ -566,7 +566,8 @@
 .serverStats {
   position: absolute;
   top: 10px;
-  right: 10px;
+  left: 50%;
+  transform: translateX(-50%);
   background-color: rgba(0, 0, 0, 0.5);
   color: white;
   padding: 5px 8px;
@@ -584,7 +585,7 @@
 
 .fpsDisplay {
   font-weight: bold;
-  text-align: right;
+  text-align: center;
 }
 
 .extendedStats {

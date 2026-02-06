@@ -1283,12 +1283,22 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
     const handlePlayerKilled = (data) => {
       console.log("Received player killed:", data);
       const killerName = data.killer?.name || "Unknown";
+      const killerTeam = data.killer?.team || "unknown";
       const victimName = data.victim?.name || "Unknown";
-      const message = `${killerName} eliminated ${victimName}`;
+      const victimTeam = data.victim?.team || "unknown";
       const messageId = Date.now();
 
       setKillFeed((prev) => {
-        const newFeed = [...prev, { id: messageId, text: message }];
+        const newFeed = [
+          ...prev,
+          {
+            id: messageId,
+            killerName,
+            killerTeam,
+            victimName,
+            victimTeam,
+          },
+        ];
         if (newFeed.length > MAX_KILL_FEED_MESSAGES) {
           return newFeed.slice(newFeed.length - MAX_KILL_FEED_MESSAGES);
         }
@@ -1530,7 +1540,25 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
       <div className={styles.killFeed}>
         {killFeed.map((msg) => (
           <div key={msg.id} className={styles.killFeedMessage}>
-            {msg.text}
+            <span
+              className={
+                msg.killerTeam === "red"
+                  ? styles.killFeedRed
+                  : styles.killFeedBlue
+              }
+            >
+              {msg.killerName}
+            </span>
+            <span className={styles.killFeedAction}> eliminated </span>
+            <span
+              className={
+                msg.victimTeam === "red"
+                  ? styles.killFeedRed
+                  : styles.killFeedBlue
+              }
+            >
+              {msg.victimName}
+            </span>
           </div>
         ))}
       </div>

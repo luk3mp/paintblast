@@ -100,23 +100,43 @@
 
 .killFeed {
   position: absolute;
-  top: 80px; /* Adjust position as needed */
-  right: 20px;
-  width: 250px;
-  background-color: rgba(0, 0, 0, 0.3);
-  padding: 5px;
+  top: 20px;
+  left: 20px;
+  width: 280px;
+  max-height: 140px; /* ~5 messages */
+  overflow: hidden;
+  background-color: rgba(0, 0, 0, 0.4);
+  padding: 6px 8px;
   border-radius: 4px;
-  font-size: 0.9em;
+  font-size: 0.85em;
   color: #eee;
-  text-align: right;
+  text-align: left;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .killFeedMessage {
-  margin-bottom: 3px;
+  margin-bottom: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.killFeedRed {
+  color: #ff4444;
+  font-weight: bold;
+}
+
+.killFeedBlue {
+  color: #4488ff;
+  font-weight: bold;
+}
+
+.killFeedAction {
+  color: #ccc;
 }
 
 /* ── Hit Indicator (damage flash) ── */

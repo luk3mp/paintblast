@@ -475,16 +475,14 @@ const Player = forwardRef(
         cp[1] += (tp[1] - cp[1]) * lerpSpeed;
         cp[2] += (tp[2] - cp[2]) * lerpSpeed;
 
-        // --- Rotation lerp (with shortest-path wrapping) ---
-        // The camera rotation.y is the yaw the player is looking.
-        // The character model faces +Z by default, but camera faces -Z,
-        // so we add Math.PI to flip the model to face the camera direction.
-        const targetYaw = targetRotation.current[1] + Math.PI;
+        // --- Rotation lerp (shortest-path angular interpolation) ---
+        // The sender computes yaw via atan2(forward.x, forward.z) which
+        // directly maps to model rotation.y (no offset needed).
+        const targetYaw = targetRotation.current[1];
         let currentYaw = currentRotation.current[1];
 
-        // Compute shortest angular difference (handles wrapping around ±π)
+        // Compute shortest angular difference (wraps around ±π)
         let diff = targetYaw - currentYaw;
-        // Normalize to [-π, π]
         diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI;
         if (diff < -Math.PI) diff += 2 * Math.PI;
 
@@ -539,10 +537,14 @@ const Player = forwardRef(
             z: position.z,
           });
 
+          // Compute yaw from camera's actual forward vector (Euler-order independent)
+          const fwd = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+          const yaw = Math.atan2(fwd.x, fwd.z);
+
           // Send position update to server/other players (include crouch state)
           onPositionUpdate(
             [position.x, position.y, position.z],
-            [camera.rotation.x, camera.rotation.y, camera.rotation.z],
+            [0, yaw, 0],
             { isCrouching: keys.crouch && isOnGround.current }
           );
 

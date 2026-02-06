@@ -1,15 +1,15 @@
-import React, { useRef, useMemo } from "react";
+import React, { useRef, useMemo, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { Vector3, Quaternion } from "three";
 
 /**
- * CS-style first-person gun model that follows the camera each frame.
- * Positioned in the bottom-right of the viewport like Counter-Strike.
+ * CS-style first-person gun model.
  *
- * The gun group is placed in the scene and manually synced to the camera's
- * world position + rotation every frame via useFrame. A ref to the barrel
- * tip mesh is exposed via `getBarrelTipWorldPosition()` so the parent can
- * read its world position for bullet origin.
+ * Instead of syncing to the camera each frame (which causes 1-frame jitter),
+ * the gun group is added as a **native Three.js child** of the camera via
+ * useEffect. This means the gun's position/rotation are in camera-local space
+ * and move with zero lag.
+ *
+ * useFrame only handles local animations (idle bob, recoil, reload).
  */
 const FirstPersonGun = React.forwardRef(
   (
@@ -21,7 +21,7 @@ const FirstPersonGun = React.forwardRef(
     },
     ref
   ) => {
-    const gunRootRef = useRef(); // Root group that tracks camera
+    const gunRootRef = useRef();
     const hopperRef = useRef();
     const barrelTipRef = useRef();
 
@@ -31,14 +31,6 @@ const FirstPersonGun = React.forwardRef(
     const lastShot = useRef(false);
 
     const { camera } = useThree();
-
-    // Reusable vectors to avoid GC pressure
-    const _offset = useMemo(() => new Vector3(), []);
-    const _camPos = useMemo(() => new Vector3(), []);
-    const _camQuat = useMemo(() => new Quaternion(), []);
-    const _right = useMemo(() => new Vector3(), []);
-    const _up = useMemo(() => new Vector3(), []);
-    const _forward = useMemo(() => new Vector3(), []);
 
     // Team colours
     const colors = useMemo(() => {
@@ -50,7 +42,6 @@ const FirstPersonGun = React.forwardRef(
         gunDark: "#1a1a1a",
         gunBarrel: "#3a3a3a",
         glove: "#111111",
-        hopperTint: isRed ? "#ff444490" : "#4488ff90",
       };
     }, [team]);
 
@@ -58,7 +49,9 @@ const FirstPersonGun = React.forwardRef(
     React.useImperativeHandle(ref, () => ({
       getBarrelTipWorldPosition: () => {
         if (barrelTipRef.current) {
-          const pos = new Vector3();
+          // Force matrix update so world position is current
+          barrelTipRef.current.updateWorldMatrix(true, false);
+          const pos = new (require("three").Vector3)();
           barrelTipRef.current.getWorldPosition(pos);
           return pos;
         }
@@ -66,18 +59,26 @@ const FirstPersonGun = React.forwardRef(
       },
     }));
 
-    // Per-frame: sync to camera + animate
+    // Attach gun group as a native Three.js child of the camera.
+    // This makes it move with the camera with ZERO lag — no useFrame sync needed.
+    useEffect(() => {
+      const gunGroup = gunRootRef.current;
+      if (!gunGroup || !camera) return;
+
+      camera.add(gunGroup);
+
+      // Set initial local position: bottom-right of view
+      gunGroup.position.set(0.28, -0.22, -0.55);
+      gunGroup.rotation.set(0, 0, 0);
+
+      return () => {
+        camera.remove(gunGroup);
+      };
+    }, [camera]);
+
+    // Per-frame: only handle local animations (bob, recoil, reload)
     useFrame((state, delta) => {
       if (!gunRootRef.current) return;
-
-      // --- Sync root group to camera world transform ---
-      camera.getWorldPosition(_camPos);
-      camera.getWorldQuaternion(_camQuat);
-
-      // Camera basis vectors
-      _right.set(1, 0, 0).applyQuaternion(_camQuat);
-      _up.set(0, 1, 0).applyQuaternion(_camQuat);
-      _forward.set(0, 0, -1).applyQuaternion(_camQuat);
 
       // --- Recoil trigger ---
       if (isShooting && !lastShot.current) {
@@ -101,11 +102,15 @@ const FirstPersonGun = React.forwardRef(
 
       // Reload offsets
       let reloadOffsetY = 0;
+      let reloadRotX = 0;
       if (isReloading) {
         const stage = Math.floor(reloadProgress * 3);
         if (stage === 0) {
-          reloadOffsetY = -(reloadProgress * 3) * 0.06;
+          const t = reloadProgress * 3;
+          reloadRotX = t * 0.4;
+          reloadOffsetY = -t * 0.06;
         } else if (stage === 1) {
+          reloadRotX = 0.4;
           reloadOffsetY = -0.06;
           if (hopperRef.current) {
             const t = (reloadProgress - 1 / 3) * 3;
@@ -114,6 +119,7 @@ const FirstPersonGun = React.forwardRef(
           }
         } else {
           const t = (reloadProgress - 2 / 3) * 3;
+          reloadRotX = 0.4 * (1 - t);
           reloadOffsetY = -0.06 * (1 - t);
           if (hopperRef.current) {
             hopperRef.current.position.set(0, 0.12, 0);
@@ -121,24 +127,20 @@ const FirstPersonGun = React.forwardRef(
         }
       }
 
-      // Compute final world position for the gun root:
-      //   camera pos + right*0.28 + up*(-0.22 + bob + reload) + forward*(0.55 - recoil)
-      const offRight = 0.28 + bobX;
-      const offUp = -0.22 + bobY + reloadOffsetY;
-      const offFwd = 0.55 - recoilZ;
-
-      gunRootRef.current.position
-        .copy(_camPos)
-        .addScaledVector(_right, offRight)
-        .addScaledVector(_up, offUp)
-        .addScaledVector(_forward, offFwd);
-
-      // Match camera rotation
-      gunRootRef.current.quaternion.copy(_camQuat);
+      // Apply local offsets (camera-local space, so just position directly)
+      gunRootRef.current.position.set(
+        0.28 + bobX,
+        -0.22 + bobY + reloadOffsetY,
+        -0.55 + recoilZ
+      );
+      gunRootRef.current.rotation.set(reloadRotX, 0, 0);
     });
 
+    // NOTE: We render this as a detached group. The useEffect above
+    // re-parents it under the camera. R3F still manages the React lifecycle,
+    // but Three.js handles the spatial parenting.
     return (
-      <group ref={gunRootRef} renderOrder={999} frustumCulled={false}>
+      <group ref={gunRootRef} frustumCulled={false}>
         {/* === RIGHT HAND / ARM === */}
         <group position={[0.02, -0.06, 0.12]}>
           {/* Forearm sleeve */}
@@ -151,34 +153,29 @@ const FirstPersonGun = React.forwardRef(
             <boxGeometry args={[0.1, 0.05, 0.14]} />
             <meshStandardMaterial color={colors.glove} roughness={0.9} />
           </mesh>
-          {/* Finger wrap around grip */}
+          {/* Finger wrap */}
           <mesh castShadow position={[0.0, -0.015, -0.02]} rotation={[0.3, 0, 0]}>
             <boxGeometry args={[0.08, 0.04, 0.06]} />
             <meshStandardMaterial color={colors.glove} roughness={0.9} />
           </mesh>
         </group>
 
-        {/* === LEFT HAND (supporting front of gun) === */}
+        {/* === LEFT HAND === */}
         <group position={[-0.02, -0.05, -0.18]}>
           <mesh castShadow>
             <boxGeometry args={[0.1, 0.05, 0.12]} />
             <meshStandardMaterial color={colors.glove} roughness={0.9} />
           </mesh>
-          {/* Forearm */}
           <mesh castShadow position={[-0.08, 0, 0.04]}>
             <boxGeometry args={[0.08, 0.045, 0.12]} />
             <meshStandardMaterial color={colors.primary} roughness={0.8} />
           </mesh>
         </group>
 
-        {/* === GUN RECEIVER (main body) === */}
+        {/* === GUN RECEIVER === */}
         <mesh castShadow receiveShadow>
           <boxGeometry args={[0.085, 0.09, 0.38]} />
-          <meshStandardMaterial
-            color={colors.gunMetal}
-            roughness={0.35}
-            metalness={0.6}
-          />
+          <meshStandardMaterial color={colors.gunMetal} roughness={0.35} metalness={0.6} />
         </mesh>
 
         {/* Top rail */}
@@ -200,86 +197,53 @@ const FirstPersonGun = React.forwardRef(
         </mesh>
 
         {/* === BARREL === */}
-        <mesh
-          castShadow
-          receiveShadow
-          position={[0, 0.01, -0.32]}
-          rotation={[Math.PI / 2, 0, 0]}
-        >
+        <mesh castShadow receiveShadow position={[0, 0.01, -0.32]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.025, 0.03, 0.28, 8]} />
-          <meshStandardMaterial
-            color={colors.gunBarrel}
-            roughness={0.25}
-            metalness={0.7}
-          />
+          <meshStandardMaterial color={colors.gunBarrel} roughness={0.25} metalness={0.7} />
         </mesh>
 
-        {/* Barrel tip / muzzle — this is the bullet origin point */}
-        <mesh
-          ref={barrelTipRef}
-          position={[0, 0.01, -0.46]}
-          frustumCulled={false}
-        >
+        {/* Barrel tip / muzzle — bullet origin marker */}
+        <mesh ref={barrelTipRef} position={[0, 0.01, -0.46]} frustumCulled={false}>
           <cylinderGeometry args={[0.03, 0.035, 0.02, 8]} rotation={[Math.PI / 2, 0, 0]} />
           <meshStandardMaterial color="#555555" roughness={0.3} metalness={0.8} />
         </mesh>
 
-        {/* Barrel shroud / handguard */}
+        {/* Barrel shroud */}
         <mesh castShadow position={[0, 0, -0.2]}>
           <boxGeometry args={[0.075, 0.075, 0.16]} />
           <meshStandardMaterial color={colors.gunDark} roughness={0.4} />
         </mesh>
 
-        {/* === HOPPER (paintball container on top) === */}
+        {/* === HOPPER === */}
         <mesh ref={hopperRef} castShadow receiveShadow position={[0, 0.12, 0.02]}>
           <sphereGeometry args={[0.08, 10, 10]} />
-          <meshStandardMaterial
-            color={colors.accent}
-            roughness={0.4}
-            transparent
-            opacity={0.85}
-          />
+          <meshStandardMaterial color={colors.accent} roughness={0.4} transparent opacity={0.85} />
         </mesh>
-        {/* Hopper neck */}
         <mesh castShadow position={[0, 0.065, 0.02]}>
           <cylinderGeometry args={[0.03, 0.035, 0.04, 8]} />
           <meshStandardMaterial color={colors.gunMetal} roughness={0.4} />
         </mesh>
 
-        {/* === STOCK (back of gun) === */}
+        {/* === STOCK === */}
         <mesh castShadow receiveShadow position={[0, -0.01, 0.24]}>
           <boxGeometry args={[0.07, 0.08, 0.12]} />
           <meshStandardMaterial color={colors.gunDark} roughness={0.5} />
         </mesh>
-        {/* Stock pad */}
         <mesh castShadow position={[0, -0.01, 0.305]}>
           <boxGeometry args={[0.075, 0.09, 0.02]} />
           <meshStandardMaterial color="#333" roughness={0.7} />
         </mesh>
 
-        {/* === CO2 TANK (below/behind) === */}
-        <mesh
-          castShadow
-          receiveShadow
-          position={[0, -0.07, 0.18]}
-          rotation={[0.2, 0, 0]}
-        >
+        {/* === CO2 TANK === */}
+        <mesh castShadow receiveShadow position={[0, -0.07, 0.18]} rotation={[0.2, 0, 0]}>
           <cylinderGeometry args={[0.03, 0.03, 0.14, 8]} />
-          <meshStandardMaterial
-            color="#555555"
-            metalness={0.7}
-            roughness={0.25}
-          />
+          <meshStandardMaterial color="#555555" metalness={0.7} roughness={0.25} />
         </mesh>
 
-        {/* Team colour accent stripe on receiver */}
+        {/* Team colour accent stripe */}
         <mesh position={[0, 0.035, 0]}>
           <boxGeometry args={[0.087, 0.008, 0.2]} />
-          <meshStandardMaterial
-            color={colors.accent}
-            emissive={colors.accent}
-            emissiveIntensity={0.15}
-          />
+          <meshStandardMaterial color={colors.accent} emissive={colors.accent} emissiveIntensity={0.15} />
         </mesh>
       </group>
     );

@@ -1376,19 +1376,22 @@ const Player = forwardRef(
           directionVector.z,
         ];
 
-        // --- Origin: barrel tip of the first-person gun ---
+        // --- Origin: compute from rigid body position at gun/chest height ---
+        // This ensures remote players see bullets from the character's gun,
+        // not from their head (camera is at eye level 1.7m, gun is ~1.0m).
         let originVector;
-        if (fpGunRef.current && fpGunRef.current.getBarrelTipWorldPosition) {
-          originVector = fpGunRef.current.getBarrelTipWorldPosition();
-        }
-        // Fallback if gun ref not available
-        if (!originVector) {
+        if (playerRef.current && typeof playerRef.current.translation === "function") {
+          const bodyPos = playerRef.current.translation();
+          const gunHeight = keys.crouch && isOnGround.current ? 0.65 : 1.0;
+          originVector = new Vector3(bodyPos.x, bodyPos.y + gunHeight, bodyPos.z);
+        } else {
+          // Fallback: camera position lowered to gun level
           originVector = new Vector3();
           camera.getWorldPosition(originVector);
-          // Lower from eye level to gun level, push forward
-          originVector.y -= 0.35;
-          originVector.addScaledVector(directionVector, 0.5);
+          originVector.y -= 0.7; // eye level → gun level
         }
+        // Push origin forward along aim direction so paintball clears the player
+        originVector.addScaledVector(directionVector, 1.0);
 
         const visualOrigin = [originVector.x, originVector.y, originVector.z];
 

@@ -31,6 +31,7 @@ const RAY_COUNT = 3; // Reduce ray count from 5 to 3 for ground detection
 const Player = forwardRef(
   (
     {
+      id = null, // Socket ID for remote players (used for hit detection)
       isLocalPlayer = false,
       position = [0, 2, 0], // Starting position (y=2 means 2 units above ground)
       rotation = [0, 0, 0],
@@ -463,6 +464,9 @@ const Player = forwardRef(
       }
     }, [isLocalPlayer, rotation]);
 
+    // Ref for the inner rotation group on remote players (visual rotation only)
+    const remoteRotationGroupRef = useRef();
+
     // Update useFrame to be more efficient
     useFrame((state, delta) => {
       // Increment frame counter
@@ -493,8 +497,18 @@ const Player = forwardRef(
         currentYaw += diff * lerpSpeed;
         currentRotation.current[1] = currentYaw;
 
-        playerRef.current.position.set(cp[0], cp[1], cp[2]);
-        playerRef.current.rotation.set(0, currentYaw, 0);
+        // Move the kinematic rigid body (for physics/collision detection)
+        if (typeof playerRef.current.setNextKinematicTranslation === "function") {
+          playerRef.current.setNextKinematicTranslation({
+            x: cp[0],
+            y: cp[1],
+            z: cp[2],
+          });
+        }
+        // Rotate the visual group inside the rigid body
+        if (remoteRotationGroupRef.current) {
+          remoteRotationGroupRef.current.rotation.set(0, currentYaw, 0);
+        }
       }
 
       if (isLocalPlayer && playerRef.current) {
@@ -1504,25 +1518,30 @@ const Player = forwardRef(
             </RigidBody>
           </>
         ) : (
-          // Remote player with character model and name tag
-          <group
+          // Remote player with character model, name tag, and physics collider for hit detection
+          <RigidBody
             ref={playerRef}
             position={position}
-            rotation={rotation}
-            userData={{ type: "player", isLocal: false }}
+            type="kinematicPosition"
+            colliders={false}
+            userData={{ type: "player", isLocal: false, playerId: id }}
+            name={`remote-player-${id}`}
           >
-            <CharacterModel
-              team={team}
-              name={name}
-              isLocalPlayer={false}
-              isCarryingFlag={isCarryingFlag}
-              carryingFlagTeam={carryingFlagTeam}
-              useLowDetail={useLowDetail}
-              isShooting={isShooting}
-              isReloading={isReloading}
-              isCrouching={isCrouching}
-            />
-          </group>
+            <CapsuleCollider args={[0.85, 0.5]} position={[0, 0.85, 0]} />
+            <group ref={remoteRotationGroupRef} rotation={rotation}>
+              <CharacterModel
+                team={team}
+                name={name}
+                isLocalPlayer={false}
+                isCarryingFlag={isCarryingFlag}
+                carryingFlagTeam={carryingFlagTeam}
+                useLowDetail={useLowDetail}
+                isShooting={isShooting}
+                isReloading={isReloading}
+                isCrouching={isCrouching}
+              />
+            </group>
+          </RigidBody>
         )}
       </>
     );

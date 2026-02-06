@@ -137,6 +137,12 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
   const [killFeed, setKillFeed] = useState([]); // Store kill messages {id, text}
   const respawnIntervalRef = useRef(null); // Ref for countdown interval
   const MAX_KILL_FEED_MESSAGES = 5; // Max messages to show
+
+  // --- Hit feedback state ---
+  const [showHitIndicator, setShowHitIndicator] = useState(false); // Red flash when YOU get hit
+  const [showHitMarker, setShowHitMarker] = useState(false); // Crosshair marker when YOU hit someone
+  const hitIndicatorTimerRef = useRef(null);
+  const hitMarkerTimerRef = useRef(null);
   // --- End NEW STATE ---
 
   // Add this useEffect for performance monitoring
@@ -629,6 +635,7 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
         return (
           <Player
             key={id}
+            id={id}
             isLocalPlayer={false}
             position={position}
             rotation={rotation || [0, 0, 0]}
@@ -724,6 +731,7 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
       position,
       direction,
       color: paintballColor, // Use team color
+      shooterId: socket?.id || null, // Track who fired this paintball
     };
 
     // Add the new paintball to the state
@@ -808,6 +816,20 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
   }, []);
 
   const handlePaintballHit = (id, hitInfo) => {
+    // --- If this paintball hit a player, emit 'hit' to server ---
+    if (hitInfo && hitInfo.hitPlayerId && hitInfo.shooterId && socket) {
+      console.log(
+        `Paintball hit player ${hitInfo.hitPlayerId} by ${hitInfo.shooterId}`
+      );
+      socket.emit("hit", {
+        target: hitInfo.hitPlayerId,
+        shooter: hitInfo.shooterId,
+      });
+      // Remove the paintball (no splat on player hits)
+      setPaintballs((prev) => prev.filter((p) => p.id !== id));
+      return;
+    }
+
     // Apply maximum splat count limit
     const currentSplats = splats.length;
 
@@ -1159,14 +1181,45 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
 
     const handleHealthUpdate = (data) => {
       console.log("Received health update:", data);
-      setGameStats((prev) => ({
-        ...prev,
-        health: data.health,
-      }));
+      setGameStats((prev) => {
+        // Flash red hit indicator if health decreased (we got hit)
+        if (data.health < prev.health) {
+          setShowHitIndicator(true);
+          if (hitIndicatorTimerRef.current)
+            clearTimeout(hitIndicatorTimerRef.current);
+          hitIndicatorTimerRef.current = setTimeout(
+            () => setShowHitIndicator(false),
+            300
+          );
+
+          // Play hit sound
+          SoundFX.play("hit", { volume: 0.6 });
+        }
+        return { ...prev, health: data.health };
+      });
     };
     socket.on("healthUpdate", handleHealthUpdate);
     cleanupFunctions.push(() =>
       socket.off("healthUpdate", handleHealthUpdate)
+    );
+
+    // --- Hit confirmed: we successfully hit another player ---
+    const handleHitConfirmed = (data) => {
+      console.log("Hit confirmed on:", data.targetId);
+      setShowHitMarker(true);
+      if (hitMarkerTimerRef.current)
+        clearTimeout(hitMarkerTimerRef.current);
+      hitMarkerTimerRef.current = setTimeout(
+        () => setShowHitMarker(false),
+        250
+      );
+
+      // Play hit marker sound
+      SoundFX.play("hitMarker", { volume: 0.5, pitch: 1.2 });
+    };
+    socket.on("hitConfirmed", handleHitConfirmed);
+    cleanupFunctions.push(() =>
+      socket.off("hitConfirmed", handleHitConfirmed)
     );
 
     const handleStartRespawn = (data) => {
@@ -1309,6 +1362,21 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
         </div>
       )}
 
+      {/* Hit Indicator — red screen flash when you take damage */}
+      {showHitIndicator && <div className={styles.hitIndicator} />}
+
+      {/* Hit Marker — white crosshair flash when you hit an opponent */}
+      {showHitMarker && (
+        <div className={styles.hitMarker}>
+          <svg width="24" height="24" viewBox="0 0 24 24">
+            <line x1="4" y1="4" x2="10" y2="10" stroke="white" strokeWidth="2" />
+            <line x1="20" y1="4" x2="14" y2="10" stroke="white" strokeWidth="2" />
+            <line x1="4" y1="20" x2="10" y2="14" stroke="white" strokeWidth="2" />
+            <line x1="20" y1="20" x2="14" y2="14" stroke="white" strokeWidth="2" />
+          </svg>
+        </div>
+      )}
+
       <Canvas
         shadows={{
           enabled: performanceSettings.shadowQuality !== "off",
@@ -1427,6 +1495,7 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
               position={paintball.position}
               direction={paintball.direction}
               color={paintball.color}
+              shooterId={paintball.shooterId || null}
               onHit={(id, hitInfo) => handlePaintballHit(id, hitInfo)}
             />
           ))}

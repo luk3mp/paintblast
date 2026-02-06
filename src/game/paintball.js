@@ -17,6 +17,7 @@ export default function Paintball({
   color = "#ff0000",
   onHit = () => {},
   id,
+  shooterId = null,
 }) {
   const paintballRef = useRef();
   const lifetime = useRef(0);
@@ -75,6 +76,27 @@ export default function Paintball({
 
     // Get position from the rigid body
     const pos = paintballRef.current.translation();
+
+    // --- Check if we hit a player ---
+    const otherBody = event.other?.rigidBodyObject;
+    const otherUserData = otherBody?.userData;
+    if (
+      otherUserData &&
+      otherUserData.type === "player" &&
+      !otherUserData.isLocal &&
+      (otherUserData.playerId || otherUserData.id)
+    ) {
+      // We hit a remote player – notify parent with the player ID
+      const targetId = otherUserData.playerId || otherUserData.id;
+      onHit(id, {
+        position: [pos.x, pos.y, pos.z],
+        normal: [0, 1, 0],
+        color: color,
+        hitPlayerId: targetId,
+        shooterId: shooterId,
+      });
+      return; // No splat for player hits – paintball is consumed
+    }
 
     // Extract collision normal (default to up if not available)
     let normal = [0, 1, 0];

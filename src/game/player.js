@@ -720,11 +720,9 @@ const Player = forwardRef(
           console.log("Height limit reached, applying downward force");
         }
 
-        // Camera height — lowered to gun/chest level so 1st person view
-        // aligns with where the character model holds the gun (~1.3m).
-        // This means bullets from camera height ≈ gun height in 3rd person.
-        const standingHeight = 1.3;
-        const crouchingHeight = 0.7;
+        // Handle crouching - SIMPLIFIED to just handle camera position
+        const standingHeight = 1.7;
+        const crouchingHeight = 0.85;
 
         if (keys.crouch && isOnGround.current) {
           // When crouching, lower the camera
@@ -1378,13 +1376,19 @@ const Player = forwardRef(
           directionVector.z,
         ];
 
-        // --- Origin: use camera position directly ---
-        // Camera is now at gun/chest height (1.3m standing), which matches
-        // where the character model holds the gun. So camera pos = gun pos
-        // in both 1st and 3rd person. Push forward to clear player model.
-        const originVector = new Vector3();
-        camera.getWorldPosition(originVector);
-        originVector.addScaledVector(directionVector, 1.0);
+        // --- Origin: barrel tip of the first-person gun ---
+        let originVector;
+        if (fpGunRef.current && fpGunRef.current.getBarrelTipWorldPosition) {
+          originVector = fpGunRef.current.getBarrelTipWorldPosition();
+        }
+        // Fallback if gun ref not available
+        if (!originVector) {
+          originVector = new Vector3();
+          camera.getWorldPosition(originVector);
+          // Lower from eye level to gun level, push forward
+          originVector.y -= 0.35;
+          originVector.addScaledVector(directionVector, 0.5);
+        }
 
         const visualOrigin = [originVector.x, originVector.y, originVector.z];
 

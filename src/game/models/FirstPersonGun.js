@@ -69,9 +69,10 @@ const FirstPersonGun = React.forwardRef(
     }));
 
     // Per-frame: sync to camera + animate
-    // Priority 1 ensures this runs AFTER the Player component's useFrame
-    // (priority 0) which sets the camera position. Reading camera state that
-    // was JUST set this frame gives zero-lag tracking with no blur/ghosting.
+    // FirstPersonGun is a child of Player, so its useFrame naturally runs
+    // AFTER Player's useFrame at the same priority (mount-order execution).
+    // This means we read the camera position set this frame — zero-lag tracking.
+    // NOTE: Do NOT use useFrame priority > 0 — it disables R3F auto-render!
     useFrame((state, delta) => {
       if (!gunRootRef.current) return;
 
@@ -146,7 +147,7 @@ const FirstPersonGun = React.forwardRef(
 
       // Match camera rotation
       gunRootRef.current.quaternion.copy(_camQuat);
-    }, 1); // <-- priority 1: runs AFTER Player's camera update (priority 0)
+    });
 
     return (
       <group ref={gunRootRef} renderOrder={999} frustumCulled={false}>

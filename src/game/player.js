@@ -895,6 +895,10 @@ const Player = forwardRef(
         }
       }
 
+      // Everything below (reload, shoot, flag capture) is local-player-only logic.
+      // Remote players don't have gameStats or input — bail out here.
+      if (!isLocalPlayer) return;
+
       // Handle reloading
       if (effectiveIsReloading) {
         const now = Date.now();

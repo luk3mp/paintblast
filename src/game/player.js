@@ -905,11 +905,13 @@ const Player = forwardRef(
             newNearFlagTeam = "Blue";
           }
 
-          // Check if near home base for flag return
-          setNearHomeBase(
+          // Check if near home base for flag return (only update if changed)
+          const newNearHomeBase =
             (team === "Red" && distToRedFlag < 3) ||
-              (team === "Blue" && distToBlueFlag < 3)
-          );
+              (team === "Blue" && distToBlueFlag < 3);
+          if (newNearHomeBase !== nearHomeBase) {
+            setNearHomeBase(newNearHomeBase);
+          }
 
           // Only update state if it changed to reduce re-renders
           if (newNearFlagTeam !== nearFlagTeam) {
@@ -1276,7 +1278,10 @@ const Player = forwardRef(
       );
 
       const isNearStation = distToRed < 10 || distToBlue < 10;
-      setNearRefillStation(isNearStation);
+      // Only update state if changed — avoids re-render every frame
+      if (isNearStation !== nearRefillStation) {
+        setNearRefillStation(isNearStation);
+      }
 
       // Handle refill input
       if (nearRefillStation && refillInput && !effectiveIsReloading) {

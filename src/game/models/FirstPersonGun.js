@@ -1,25 +1,41 @@
 import React, { useRef, useMemo, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { Vector3 } from "three";
+import { Vector3, Quaternion } from "three";
 
 /**
- * CS-style first-person gun — directly parented to the camera.
+ * CS-style first-person gun — 100 % fixed in the viewport.
  *
- * Instead of computing a world position every frame (which always has
- * at least a subtle lag), we make the gun group a native Three.js child
- * of the camera via camera.add().  The gun's position is then in
- * camera-local space, and Three.js automatically computes the correct
- * world transform during the render pass — zero lag by definition.
+ * Positioning strategy:
+ *   Every frame we copy camera.position and camera.quaternion (the
+ *   LOCAL properties — always up-to-date) and place the gun at a
+ *   fixed offset in camera-local space.
  *
- * React.memo prevents re-renders (the only prop is `team`), so R3F's
- * reconciler never reparents the gun back.  A useFrame sentinel
- * re-attaches if anything unexpected happens.
+ *   camera.add() is NOT used because R3F's React reconciler fights
+ *   native reparenting and silently moves the group back.
+ *
+ * Why blur was happening before:
+ *   player.js had multiple useState setters firing inside useFrame
+ *   every frame (setNearHomeBase, setNearRefillStation, etc.), which
+ *   triggered React re-renders at 60 fps. Each re-render briefly
+ *   resets the gun's JSX-declared position before useFrame corrects
+ *   it on the next tick, producing a one-frame "ghost" image.
+ *   Those setters are now guarded so they only fire on actual change.
  *
  * Depth technique (gun always on top of world):
- *   1. Sentinel mesh (renderOrder 998) clears depth buffer
+ *   1. Sentinel mesh (renderOrder 998) clears the depth buffer
  *   2. Gun meshes (renderOrder 999) render on top
  *   3. Normal depthTest so gun parts occlude each other correctly
+ *
+ * NO animations — gun is 100 % fixed in position.
  */
+
+// Pre-allocated scratch objects (module-level — never GC'd)
+const _pos = new Vector3();
+const _quat = new Quaternion();
+const _right = new Vector3();
+const _up = new Vector3();
+const _fwd = new Vector3();
+
 const FirstPersonGun = React.memo(
   React.forwardRef(({ team = "Red" }, ref) => {
     const gunRootRef = useRef();
@@ -41,7 +57,7 @@ const FirstPersonGun = React.memo(
       };
     }, [team]);
 
-    // Attach depth-buffer clear to sentinel mesh
+    // Attach depth-buffer clear to sentinel mesh (once)
     useEffect(() => {
       if (depthClearRef.current) {
         depthClearRef.current.onBeforeRender = (renderer) => {
@@ -49,16 +65,6 @@ const FirstPersonGun = React.memo(
         };
       }
     }, []);
-
-    // Cleanup: remove gun from camera on unmount
-    useEffect(() => {
-      return () => {
-        const gun = gunRootRef.current;
-        if (gun && camera && gun.parent === camera) {
-          camera.remove(gun);
-        }
-      };
-    }, [camera]);
 
     // Expose barrel tip world position for bullet origin
     React.useImperativeHandle(ref, () => ({
@@ -72,19 +78,30 @@ const FirstPersonGun = React.memo(
       },
     }));
 
-    // ── Per-frame: ensure gun is a child of the camera ──────────
-    // Position [0.28, -0.22, -0.55] is in camera-local space:
-    //   x = right,  y = up,  z = forward (camera looks along -Z)
-    // Three.js computes the world transform during the render pass,
-    // so the gun is guaranteed to be perfectly in sync with the camera.
+    // ── Per-frame: snap gun to camera ────────────────────────────
     useFrame(() => {
       const gun = gunRootRef.current;
       if (!gun) return;
-      if (gun.parent !== camera) {
-        camera.add(gun);
-        gun.position.set(0.28, -0.22, -0.55);
-        gun.quaternion.identity();
-      }
+
+      // Read camera's LOCAL position & quaternion — always current.
+      // (getWorldPosition/Quaternion read from matrixWorld which is
+      //  one frame stale inside useFrame.)
+      _pos.copy(camera.position);
+      _quat.copy(camera.quaternion);
+
+      // Basis vectors from camera orientation
+      _right.set(1, 0, 0).applyQuaternion(_quat);
+      _up.set(0, 1, 0).applyQuaternion(_quat);
+      _fwd.set(0, 0, -1).applyQuaternion(_quat);
+
+      // Fixed offset in camera-local space
+      gun.position
+        .copy(_pos)
+        .addScaledVector(_right, 0.28)
+        .addScaledVector(_up, -0.22)
+        .addScaledVector(_fwd, 0.55);
+
+      gun.quaternion.copy(_quat);
     });
 
     return (

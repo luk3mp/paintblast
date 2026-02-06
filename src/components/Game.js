@@ -31,6 +31,7 @@ import {
   getConnectionState,
   getSocket,
   connectSocket,
+  setPlayerSession,
 } from "../lib/socket";
 import SoundFX from "../lib/soundEffects";
 
@@ -321,35 +322,23 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
         }
       );
 
-      // Set up direct socket event listeners
-      socketInstance.on("players", (data) => {
-        console.log("Received player update:", data);
-
-        // Make sure we don't lose our own player data and properly track others
-        if (data && typeof data === "object") {
-          // Log the number of players for debugging
-          const playerCount = Object.keys(data).length;
-          console.log(`Player update contains ${playerCount} players`);
-
-          // Safety check - never process null/undefined data
-          if (!data) {
-            console.error("Received null/undefined player data");
-            return;
-          }
-
-          try {
+      // Listen for player updates via the DOM event system
+      // (socket.js is the SINGLE handler for "players" socket events,
+      //  it relays them via EVENTS.PLAYERS_UPDATE to avoid double-handling)
+      const removePlayersUpdateListener = addEventListener(
+        EVENTS.PLAYERS_UPDATE,
+        (playersData) => {
+          if (playersData && typeof playersData === "object") {
             // Only update state if player data actually changed to prevent flicker
             setPlayers((prevPlayers) => {
-              // Quick check: if same number of keys and positions match, skip update
               const prevKeys = Object.keys(prevPlayers);
-              const newKeys = Object.keys(data);
+              const newKeys = Object.keys(playersData);
               if (prevKeys.length === newKeys.length) {
                 let changed = false;
                 for (const key of newKeys) {
                   if (!prevPlayers[key]) { changed = true; break; }
                   const prev = prevPlayers[key];
-                  const next = data[key];
-                  // Check position, health, team, is_eliminated for meaningful changes
+                  const next = playersData[key];
                   if (
                     prev.team !== next.team ||
                     prev.health !== next.health ||
@@ -366,43 +355,16 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
                     break;
                   }
                 }
-                if (!changed) return prevPlayers; // Return same reference to skip re-render
+                if (!changed) return prevPlayers;
               }
-              return data;
+              return playersData;
             });
 
-            // Update debug display with player count
-            setDebugInfo((prev) => ({
-              ...prev,
-              playerCount: Object.keys(data).length,
-              socketConnected: true,
-            }));
-          } catch (e) {
-            console.error("Error processing player data:", e);
-          }
-        } else {
-          console.error("Received invalid player data format:", data);
-        }
-      });
-
-      // Also listen for the backup event
-      const removePlayersUpdateListener = addEventListener(
-        EVENTS.PLAYERS_UPDATE,
-        (playersData) => {
-          // Only process if we didn't already get this data via direct socket event
-          if (playersData && typeof playersData === "object") {
-            console.log("Received player update via event system");
-            // Apply the same safe handling logic as above
-            setPlayers(playersData);
             setDebugInfo((prev) => ({
               ...prev,
               playerCount: Object.keys(playersData).length,
               socketConnected: true,
             }));
-          } else {
-            console.warn(
-              "Received invalid data format from PLAYERS_UPDATE event"
-            );
           }
         }
       );
@@ -486,6 +448,9 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
         team: assignedTeam,
       }));
 
+      // Store session so socket.js can auto-rejoin on reconnect
+      setPlayerSession(playerName, assignedTeam);
+
       // Send join request to server
       socketInstance.emit("join", {
         name: playerName,
@@ -525,6 +490,7 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
 
       // Clean up listeners
       return () => {
+        // Remove DOM event listeners
         removeConnectionListener();
         removeQueueReadyListener();
         removePlayerKilledListener();
@@ -540,9 +506,8 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           clearInterval(pingIntervalRef.current);
         }
 
-        // Remove socket event listeners
+        // Remove direct socket event listeners
         if (socketInstance) {
-          socketInstance.off("players");
           socketInstance.off("message");
           socketInstance.off("joinSuccess");
           socketInstance.off("paintball");

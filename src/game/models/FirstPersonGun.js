@@ -14,7 +14,7 @@ import { Vector3, Quaternion } from "three";
  *
  * The result: the gun always draws on top of the world AND looks solid.
  */
-const FirstPersonGun = React.forwardRef(
+const FirstPersonGun = React.memo(React.forwardRef(
   (
     {
       team = "Red",
@@ -265,7 +265,7 @@ const FirstPersonGun = React.forwardRef(
       </group>
     );
   }
-);
+));
 
 FirstPersonGun.displayName = "FirstPersonGun";
 

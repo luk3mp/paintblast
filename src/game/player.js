@@ -82,8 +82,13 @@ const Player = forwardRef(
       getRef: () => playerRef.current,
     }));
 
-    // For remote players — smooth interpolation
-    const [playerPosition, setPlayerPosition] = useState(position);
+    // Position/rotation tracking — use refs (not state) to avoid triggering
+    // React re-renders every ~30ms. All reads are inside useFrame, never in JSX.
+    const playerPosition = useRef({
+      x: Array.isArray(position) ? position[0] : 0,
+      y: Array.isArray(position) ? position[1] : 2,
+      z: Array.isArray(position) ? position[2] : 0,
+    });
     const [playerRotation, setPlayerRotation] = useState(rotation);
     const targetPosition = useRef(
       Array.isArray(position) ? [...position] : [0, 2, 0]
@@ -283,11 +288,11 @@ const Player = forwardRef(
 
     useEffect(() => {
       if (!isLocalPlayer) {
-        setPlayerPosition({
+        playerPosition.current = {
           x: position[0],
           y: position[1],
           z: position[2],
-        });
+        };
         setPlayerRotation(rotation);
       }
     }, [isLocalPlayer, position, rotation]);
@@ -510,31 +515,31 @@ const Player = forwardRef(
           if (typeof playerRef.current.translation === "function") {
             position = playerRef.current.translation();
           } else {
-            // Fall back to playerPosition state
+            // Fall back to playerPosition ref
             position = {
-              x: playerPosition.x,
-              y: playerPosition.y,
-              z: playerPosition.z,
+              x: playerPosition.current.x,
+              y: playerPosition.current.y,
+              z: playerPosition.current.z,
             };
           }
         } catch (error) {
           console.error("Error getting player position:", error);
-          // Fall back to playerPosition state
+          // Fall back to playerPosition ref
           position = {
-            x: playerPosition.x,
-            y: playerPosition.y,
-            z: playerPosition.z,
+            x: playerPosition.current.x,
+            y: playerPosition.current.y,
+            z: playerPosition.current.z,
           };
         }
 
         // Throttle position updates to server/other players
         if (now - lastPositionUpdateTime.current >= POSITION_UPDATE_RATE) {
-          // Update player position state
-          setPlayerPosition({
+          // Update player position ref (no React re-render!)
+          playerPosition.current = {
             x: position.x,
             y: position.y,
             z: position.z,
-          });
+          };
 
           // Compute yaw from camera's actual forward vector (Euler-order independent)
           // Camera faces -Z, model faces +Z, so add PI to flip 180°
@@ -779,11 +784,11 @@ const Player = forwardRef(
               // Local player with RigidBody has translation() method
               position = playerRef.current.translation();
             } else {
-              // Remote player or non-initialized player - use the playerPosition state
+              // Remote player or non-initialized player - use the playerPosition ref
               position = {
-                x: playerPosition.x,
-                y: playerPosition.y,
-                z: playerPosition.z,
+                x: playerPosition.current.x,
+                y: playerPosition.current.y,
+                z: playerPosition.current.z,
               };
             }
           } catch (error) {
@@ -791,11 +796,11 @@ const Player = forwardRef(
               "Error getting player position for crate detection:",
               error
             );
-            // Fall back to playerPosition state
+            // Fall back to playerPosition ref
             position = {
-              x: playerPosition.x,
-              y: playerPosition.y,
-              z: playerPosition.z,
+              x: playerPosition.current.x,
+              y: playerPosition.current.y,
+              z: playerPosition.current.z,
             };
           }
 
@@ -857,11 +862,11 @@ const Player = forwardRef(
               // Local player with RigidBody has translation() method
               position = playerRef.current.translation();
             } else {
-              // Remote player or non-initialized player - use the playerPosition state
+              // Remote player or non-initialized player - use the playerPosition ref
               position = {
-                x: playerPosition.x,
-                y: playerPosition.y,
-                z: playerPosition.z,
+                x: playerPosition.current.x,
+                y: playerPosition.current.y,
+                z: playerPosition.current.z,
               };
             }
           } catch (error) {
@@ -869,11 +874,11 @@ const Player = forwardRef(
               "Error getting player position for flag detection:",
               error
             );
-            // Fall back to playerPosition state
+            // Fall back to playerPosition ref
             position = {
-              x: playerPosition.x,
-              y: playerPosition.y,
-              z: playerPosition.z,
+              x: playerPosition.current.x,
+              y: playerPosition.current.y,
+              z: playerPosition.current.z,
             };
           }
 
@@ -1087,7 +1092,7 @@ const Player = forwardRef(
           isCarryingFlag: ${isCarryingFlag}
           carryingFlagTeam: ${carryingFlagTeam}
           isNearCanisterCrate: ${isNearCanisterCrate}
-          position: ${JSON.stringify(playerPosition)}
+          position: ${JSON.stringify(playerPosition.current)}
         `);
       }
     });

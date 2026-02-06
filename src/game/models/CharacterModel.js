@@ -48,7 +48,7 @@ const CharacterModel = ({
     : null;
 
   // Scale factor to make characters taller / more visible
-  const modelScale = 1.4;
+  const modelScale = 1.7;
   // Crouch: lower the model and squash slightly
   const crouchOffsetY = isCrouching ? -0.35 : 0;
   const crouchScaleY = isCrouching ? 0.75 : 1;

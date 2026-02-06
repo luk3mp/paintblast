@@ -2,14 +2,16 @@ import {
   useRef,
   useEffect,
   useState,
+  useCallback,
   forwardRef,
   useImperativeHandle,
 } from "react";
-import { useFrame, useThree } from "@react-three/fiber";
-import { Vector3, Quaternion, Euler } from "three";
+import { useFrame, useThree, createPortal } from "@react-three/fiber";
+import { Vector3, Quaternion, Euler, Scene } from "three";
 import { RigidBody, CapsuleCollider, useRapier } from "@react-three/rapier";
 import { useKeyboardControls } from "../hooks/useKeyboardControls";
 import CharacterModel from "./models/CharacterModel";
+import FirstPersonGun from "./models/FirstPersonGun";
 
 // Movement constants
 const SPEED = 500.0; // Force-based movement needs higher values
@@ -55,6 +57,7 @@ const Player = forwardRef(
     ref
   ) => {
     const playerRef = useRef();
+    const fpGunRef = useRef(); // First-person gun ref (barrel tip access)
     const { camera } = useThree();
     const { rapier, world } = useRapier();
 
@@ -1363,9 +1366,9 @@ const Player = forwardRef(
       }
 
       if (onShoot) {
-        // --- Calculate Trajectory (Center Screen / Crosshair) ---
+        // --- Direction: always centre-screen (crosshair) ---
         const directionVector = new Vector3();
-        camera.getWorldDirection(directionVector); // Get camera's forward direction
+        camera.getWorldDirection(directionVector);
         directionVector.normalize();
         const direction = [
           directionVector.x,
@@ -1373,24 +1376,19 @@ const Player = forwardRef(
           directionVector.z,
         ];
 
-        // --- Calculate Origin ---
-        // Use the rigid body position (feet) + a gun-height offset (~1.2m)
-        // instead of camera.getWorldPosition() which is at eye level (1.7m).
-        // This makes bullets appear to come from chest/gun level for remote viewers.
-        // Spawn slightly forward (0.5m) so the ball doesn't clip the player model.
+        // --- Origin: barrel tip of the first-person gun ---
         let originVector;
-        if (playerRef.current && typeof playerRef.current.translation === "function") {
-          const bodyPos = playerRef.current.translation();
-          const gunHeight = keys.crouch && isOnGround.current ? 0.7 : 1.2;
-          originVector = new Vector3(bodyPos.x, bodyPos.y + gunHeight, bodyPos.z);
-        } else {
-          // Fallback to camera position lowered slightly
+        if (fpGunRef.current && fpGunRef.current.getBarrelTipWorldPosition) {
+          originVector = fpGunRef.current.getBarrelTipWorldPosition();
+        }
+        // Fallback if gun ref not available
+        if (!originVector) {
           originVector = new Vector3();
           camera.getWorldPosition(originVector);
-          originVector.y -= 0.5;
+          // Lower from eye level to gun level, push forward
+          originVector.y -= 0.35;
+          originVector.addScaledVector(directionVector, 0.5);
         }
-        // Push the origin forward along the aim direction to avoid self-clipping
-        originVector.addScaledVector(directionVector, 0.5);
 
         const visualOrigin = [originVector.x, originVector.y, originVector.z];
 
@@ -1490,44 +1488,58 @@ const Player = forwardRef(
     return (
       <>
         {isLocalPlayer ? (
-          // Local player with physics and first person view
-          <RigidBody
-            ref={playerRef}
-            position={getRigidBodyPosition()}
-            enabledRotations={[false, false, false]}
-            linearDamping={5.0}
-            type="dynamic"
-            colliders={false}
-            userData={{ type: "player", isLocal: true }}
-            name="player"
-            friction={0.1}
-            restitution={0.0}
-            lockRotations={true}
-            mass={1.0}
-            gravityScale={4.0}
-            ccd={true}
-            onCollisionEnter={() => {
-              if (!disableCollisionHandling.current) {
-                console.log("Player collision detected");
-                // Disable further collision handling after initial setup
-                disableCollisionHandling.current = true;
-              }
-            }}
-          >
-            {/* Position the collider so its base aligns with y=0 */}
-            <CapsuleCollider args={[0.85, 0.5]} position={[0, 0.85, 0]} />
+          <>
+            {/* First-person gun attached to camera */}
+            {createPortal(
+              <FirstPersonGun
+                ref={fpGunRef}
+                team={team}
+                isShooting={effectiveIsShooting}
+                isReloading={effectiveIsReloading}
+                reloadProgress={effectiveReloadProgress}
+              />,
+              camera
+            )}
 
-            {/* Invisible mesh for the local player - using opacity 0 to hide completely */}
-            <mesh visible={false}>
-              <capsuleGeometry args={[0.5, 1.7, 8, 16]} />
-              <meshBasicMaterial
-                attach="material"
-                color={team === "Red" ? "#ff0000" : "#0066ff"}
-                opacity={0}
-                transparent
-              />
-            </mesh>
-          </RigidBody>
+            {/* Local player with physics */}
+            <RigidBody
+              ref={playerRef}
+              position={getRigidBodyPosition()}
+              enabledRotations={[false, false, false]}
+              linearDamping={5.0}
+              type="dynamic"
+              colliders={false}
+              userData={{ type: "player", isLocal: true }}
+              name="player"
+              friction={0.1}
+              restitution={0.0}
+              lockRotations={true}
+              mass={1.0}
+              gravityScale={4.0}
+              ccd={true}
+              onCollisionEnter={() => {
+                if (!disableCollisionHandling.current) {
+                  console.log("Player collision detected");
+                  // Disable further collision handling after initial setup
+                  disableCollisionHandling.current = true;
+                }
+              }}
+            >
+              {/* Position the collider so its base aligns with y=0 */}
+              <CapsuleCollider args={[0.85, 0.5]} position={[0, 0.85, 0]} />
+
+              {/* Invisible mesh for the local player */}
+              <mesh visible={false}>
+                <capsuleGeometry args={[0.5, 1.7, 8, 16]} />
+                <meshBasicMaterial
+                  attach="material"
+                  color={team === "Red" ? "#ff0000" : "#0066ff"}
+                  opacity={0}
+                  transparent
+                />
+              </mesh>
+            </RigidBody>
+          </>
         ) : (
           // Remote player with character model and name tag
           <group

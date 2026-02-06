@@ -720,9 +720,11 @@ const Player = forwardRef(
           console.log("Height limit reached, applying downward force");
         }
 
-        // Handle crouching - SIMPLIFIED to just handle camera position
-        const standingHeight = 1.7;
-        const crouchingHeight = 0.85;
+        // Camera height — lowered to gun/chest level so 1st person view
+        // aligns with where the character model holds the gun (~1.3m).
+        // This means bullets from camera height ≈ gun height in 3rd person.
+        const standingHeight = 1.3;
+        const crouchingHeight = 0.7;
 
         if (keys.crouch && isOnGround.current) {
           // When crouching, lower the camera
@@ -1376,21 +1378,12 @@ const Player = forwardRef(
           directionVector.z,
         ];
 
-        // --- Origin: compute from rigid body position at gun/chest height ---
-        // This ensures remote players see bullets from the character's gun,
-        // not from their head (camera is at eye level 1.7m, gun is ~1.0m).
-        let originVector;
-        if (playerRef.current && typeof playerRef.current.translation === "function") {
-          const bodyPos = playerRef.current.translation();
-          const gunHeight = keys.crouch && isOnGround.current ? 0.65 : 1.0;
-          originVector = new Vector3(bodyPos.x, bodyPos.y + gunHeight, bodyPos.z);
-        } else {
-          // Fallback: camera position lowered to gun level
-          originVector = new Vector3();
-          camera.getWorldPosition(originVector);
-          originVector.y -= 0.7; // eye level → gun level
-        }
-        // Push origin forward along aim direction so paintball clears the player
+        // --- Origin: use camera position directly ---
+        // Camera is now at gun/chest height (1.3m standing), which matches
+        // where the character model holds the gun. So camera pos = gun pos
+        // in both 1st and 3rd person. Push forward to clear player model.
+        const originVector = new Vector3();
+        camera.getWorldPosition(originVector);
         originVector.addScaledVector(directionVector, 1.0);
 
         const visualOrigin = [originVector.x, originVector.y, originVector.z];

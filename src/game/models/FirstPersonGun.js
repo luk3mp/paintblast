@@ -1,15 +1,18 @@
-import React, { useRef, useMemo } from "react";
+import React, { useRef, useMemo, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Vector3, Quaternion } from "three";
 
 /**
  * CS-style first-person gun model that follows the camera each frame.
- * Positioned in the bottom-right of the viewport like Counter-Strike.
  *
- * The gun group is placed in the scene and manually synced to the camera's
- * world position + rotation every frame via useFrame. A ref to the barrel
- * tip mesh is exposed via `getBarrelTipWorldPosition()` so the parent can
- * read its world position for bullet origin.
+ * Uses the standard FPS viewmodel rendering technique:
+ *   1. All gun meshes have renderOrder: 999 (drawn after world)
+ *   2. A tiny sentinel mesh at renderOrder: 998 clears the depth buffer
+ *      right before the gun draws
+ *   3. Gun materials use NORMAL depthTest (true) so parts properly
+ *      occlude each other — no see-through / ghosting artifacts
+ *
+ * The result: the gun always draws on top of the world AND looks solid.
  */
 const FirstPersonGun = React.forwardRef(
   (
@@ -21,9 +24,10 @@ const FirstPersonGun = React.forwardRef(
     },
     ref
   ) => {
-    const gunRootRef = useRef(); // Root group that tracks camera
+    const gunRootRef = useRef();
     const hopperRef = useRef();
     const barrelTipRef = useRef();
+    const depthClearRef = useRef(); // Sentinel mesh for depth buffer clear
 
     // Animation values
     const recoilAmount = useRef(0);
@@ -48,15 +52,22 @@ const FirstPersonGun = React.forwardRef(
         gunDark: "#1a1a1a",
         gunBarrel: "#3a3a3a",
         glove: "#111111",
-        hopperTint: isRed ? "#ff444490" : "#4488ff90",
       };
     }, [team]);
 
-    // depthTest:false ensures the gun always renders on top of world geometry
-    // (prevents the gun clipping through walls / looking transparent)
-    const gm = { depthTest: false };
+    // --- Depth buffer clear ---
+    // Attach onBeforeRender to a tiny sentinel mesh (renderOrder 998).
+    // This clears the depth buffer right before the gun (renderOrder 999)
+    // starts drawing, so world geometry can't occlude the gun.
+    useEffect(() => {
+      if (depthClearRef.current) {
+        depthClearRef.current.onBeforeRender = (renderer) => {
+          renderer.clearDepth();
+        };
+      }
+    }, []);
 
-    // Expose barrel tip ref so parent can get world position
+    // Expose barrel tip world position for bullet origin
     React.useImperativeHandle(ref, () => ({
       getBarrelTipWorldPosition: () => {
         if (barrelTipRef.current) {
@@ -70,9 +81,7 @@ const FirstPersonGun = React.forwardRef(
 
     // Per-frame: sync to camera + animate
     // FirstPersonGun is a child of Player, so its useFrame naturally runs
-    // AFTER Player's useFrame at the same priority (mount-order execution).
-    // This means we read the camera position set this frame — zero-lag tracking.
-    // NOTE: Do NOT use useFrame priority > 0 — it disables R3F auto-render!
+    // AFTER Player's useFrame (mount-order). Camera position is already set.
     useFrame((state, delta) => {
       if (!gunRootRef.current) return;
 
@@ -105,20 +114,16 @@ const FirstPersonGun = React.forwardRef(
       if (isReloading) {
         const stage = Math.floor(reloadProgress * 3);
         if (stage === 0) {
-          // Stage 0: gun dips down slightly
           reloadOffsetY = -(reloadProgress * 3) * 0.04;
         } else if (stage === 1) {
-          // Stage 1: gun stays dipped, hopper lifts gently
           reloadOffsetY = -0.04;
           if (hopperRef.current) {
             const t = (reloadProgress - 1 / 3) * 3;
-            // Subtle lift: 0.06 up, 0.03 sideways (was 0.15/0.1 — way too much)
             hopperRef.current.position.y = 0.12 + Math.sin(t * Math.PI) * 0.06;
             hopperRef.current.position.x = Math.sin(t * Math.PI) * 0.03;
             hopperRef.current.position.z = 0.02;
           }
         } else {
-          // Stage 2: gun returns to normal, hopper snaps back
           const t = (reloadProgress - 2 / 3) * 3;
           reloadOffsetY = -0.04 * (1 - t);
           if (hopperRef.current) {
@@ -126,15 +131,13 @@ const FirstPersonGun = React.forwardRef(
           }
         }
       } else {
-        // Not reloading — ensure hopper is always at rest position
-        // (prevents it staying displaced if reload was cancelled mid-animation)
+        // Safety reset when not reloading
         if (hopperRef.current) {
           hopperRef.current.position.set(0, 0.12, 0.02);
         }
       }
 
-      // Compute final world position for the gun root:
-      //   camera pos + right*0.28 + up*(-0.22 + reload) + forward*(0.55 - recoil)
+      // Final world position: camera + offsets in camera-local space
       const offRight = 0.28;
       const offUp = -0.22 + reloadOffsetY;
       const offFwd = 0.55 - recoilZ;
@@ -145,118 +148,119 @@ const FirstPersonGun = React.forwardRef(
         .addScaledVector(_up, offUp)
         .addScaledVector(_forward, offFwd);
 
-      // Match camera rotation
       gunRootRef.current.quaternion.copy(_camQuat);
     });
 
     return (
-      <group ref={gunRootRef} renderOrder={999} frustumCulled={false}>
+      <group ref={gunRootRef} frustumCulled={false}>
+        {/* Depth-clear sentinel: tiny invisible mesh at renderOrder 998.
+            Its onBeforeRender clears the depth buffer so the gun (999)
+            renders on top of the world while keeping proper self-occlusion. */}
+        <mesh ref={depthClearRef} renderOrder={998}>
+          <planeGeometry args={[0.001, 0.001]} />
+          <meshBasicMaterial colorWrite={false} depthWrite={false} />
+        </mesh>
+
         {/* === RIGHT HAND / ARM === */}
         <group position={[0.02, -0.06, 0.12]}>
-          {/* Forearm sleeve */}
           <mesh renderOrder={999} position={[0.06, 0.0, 0.08]}>
             <boxGeometry args={[0.09, 0.055, 0.18]} />
-            <meshStandardMaterial color={colors.primary} roughness={0.8} {...gm} />
+            <meshStandardMaterial color={colors.primary} roughness={0.8} />
           </mesh>
-          {/* Glove */}
           <mesh renderOrder={999} position={[0.02, -0.005, 0]} rotation={[0.2, 0, 0]}>
             <boxGeometry args={[0.1, 0.05, 0.14]} />
-            <meshStandardMaterial color={colors.glove} roughness={0.9} {...gm} />
+            <meshStandardMaterial color={colors.glove} roughness={0.9} />
           </mesh>
-          {/* Finger wrap around grip */}
           <mesh renderOrder={999} position={[0.0, -0.015, -0.02]} rotation={[0.3, 0, 0]}>
             <boxGeometry args={[0.08, 0.04, 0.06]} />
-            <meshStandardMaterial color={colors.glove} roughness={0.9} {...gm} />
+            <meshStandardMaterial color={colors.glove} roughness={0.9} />
           </mesh>
         </group>
 
-        {/* === LEFT HAND (supporting front of gun) === */}
+        {/* === LEFT HAND === */}
         <group position={[-0.02, -0.05, -0.18]}>
           <mesh renderOrder={999}>
             <boxGeometry args={[0.1, 0.05, 0.12]} />
-            <meshStandardMaterial color={colors.glove} roughness={0.9} {...gm} />
+            <meshStandardMaterial color={colors.glove} roughness={0.9} />
           </mesh>
-          {/* Forearm */}
           <mesh renderOrder={999} position={[-0.08, 0, 0.04]}>
             <boxGeometry args={[0.08, 0.045, 0.12]} />
-            <meshStandardMaterial color={colors.primary} roughness={0.8} {...gm} />
+            <meshStandardMaterial color={colors.primary} roughness={0.8} />
           </mesh>
         </group>
 
-        {/* === GUN RECEIVER (main body) === */}
+        {/* === GUN RECEIVER === */}
         <mesh renderOrder={999}>
           <boxGeometry args={[0.085, 0.09, 0.38]} />
-          <meshStandardMaterial color={colors.gunMetal} roughness={0.35} metalness={0.6} {...gm} />
+          <meshStandardMaterial color={colors.gunMetal} roughness={0.35} metalness={0.6} />
         </mesh>
 
         {/* Top rail */}
         <mesh renderOrder={999} position={[0, 0.05, -0.04]}>
           <boxGeometry args={[0.05, 0.02, 0.28]} />
-          <meshStandardMaterial color={colors.gunDark} roughness={0.3} metalness={0.7} {...gm} />
+          <meshStandardMaterial color={colors.gunDark} roughness={0.3} metalness={0.7} />
         </mesh>
 
         {/* === GRIP === */}
         <mesh renderOrder={999} position={[0, -0.1, 0.06]} rotation={[-0.15, 0, 0]}>
           <boxGeometry args={[0.065, 0.14, 0.07]} />
-          <meshStandardMaterial color={colors.gunDark} roughness={0.5} {...gm} />
+          <meshStandardMaterial color={colors.gunDark} roughness={0.5} />
         </mesh>
 
         {/* Trigger guard */}
         <mesh renderOrder={999} position={[0, -0.04, 0.04]}>
           <boxGeometry args={[0.07, 0.015, 0.08]} />
-          <meshStandardMaterial color={colors.gunDark} roughness={0.4} {...gm} />
+          <meshStandardMaterial color={colors.gunDark} roughness={0.4} />
         </mesh>
 
         {/* === BARREL === */}
         <mesh renderOrder={999} position={[0, 0.01, -0.32]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.025, 0.03, 0.28, 8]} />
-          <meshStandardMaterial color={colors.gunBarrel} roughness={0.25} metalness={0.7} {...gm} />
+          <meshStandardMaterial color={colors.gunBarrel} roughness={0.25} metalness={0.7} />
         </mesh>
 
-        {/* Barrel tip / muzzle — bullet origin point */}
+        {/* Barrel tip / muzzle — bullet origin */}
         <mesh ref={barrelTipRef} renderOrder={999} position={[0, 0.01, -0.46]} frustumCulled={false}>
           <cylinderGeometry args={[0.03, 0.035, 0.02, 8]} rotation={[Math.PI / 2, 0, 0]} />
-          <meshStandardMaterial color="#555555" roughness={0.3} metalness={0.8} {...gm} />
+          <meshStandardMaterial color="#555555" roughness={0.3} metalness={0.8} />
         </mesh>
 
-        {/* Barrel shroud / handguard */}
+        {/* Barrel shroud */}
         <mesh renderOrder={999} position={[0, 0, -0.2]}>
           <boxGeometry args={[0.075, 0.075, 0.16]} />
-          <meshStandardMaterial color={colors.gunDark} roughness={0.4} {...gm} />
+          <meshStandardMaterial color={colors.gunDark} roughness={0.4} />
         </mesh>
 
-        {/* === HOPPER (paintball container on top) === */}
+        {/* === HOPPER === */}
         <mesh ref={hopperRef} renderOrder={999} position={[0, 0.12, 0.02]}>
           <sphereGeometry args={[0.08, 10, 10]} />
-          <meshStandardMaterial color={colors.accent} roughness={0.4} transparent opacity={0.85} {...gm} />
+          <meshStandardMaterial color={colors.accent} roughness={0.4} transparent opacity={0.85} />
         </mesh>
-        {/* Hopper neck */}
         <mesh renderOrder={999} position={[0, 0.065, 0.02]}>
           <cylinderGeometry args={[0.03, 0.035, 0.04, 8]} />
-          <meshStandardMaterial color={colors.gunMetal} roughness={0.4} {...gm} />
+          <meshStandardMaterial color={colors.gunMetal} roughness={0.4} />
         </mesh>
 
-        {/* === STOCK (back of gun) === */}
+        {/* === STOCK === */}
         <mesh renderOrder={999} position={[0, -0.01, 0.24]}>
           <boxGeometry args={[0.07, 0.08, 0.12]} />
-          <meshStandardMaterial color={colors.gunDark} roughness={0.5} {...gm} />
+          <meshStandardMaterial color={colors.gunDark} roughness={0.5} />
         </mesh>
-        {/* Stock pad */}
         <mesh renderOrder={999} position={[0, -0.01, 0.305]}>
           <boxGeometry args={[0.075, 0.09, 0.02]} />
-          <meshStandardMaterial color="#333" roughness={0.7} {...gm} />
+          <meshStandardMaterial color="#333" roughness={0.7} />
         </mesh>
 
-        {/* === CO2 TANK (below/behind) === */}
+        {/* === CO2 TANK === */}
         <mesh renderOrder={999} position={[0, -0.07, 0.18]} rotation={[0.2, 0, 0]}>
           <cylinderGeometry args={[0.03, 0.03, 0.14, 8]} />
-          <meshStandardMaterial color="#555555" metalness={0.7} roughness={0.25} {...gm} />
+          <meshStandardMaterial color="#555555" metalness={0.7} roughness={0.25} />
         </mesh>
 
-        {/* Team colour accent stripe on receiver */}
+        {/* Team accent stripe */}
         <mesh renderOrder={999} position={[0, 0.035, 0]}>
           <boxGeometry args={[0.087, 0.008, 0.2]} />
-          <meshStandardMaterial color={colors.accent} emissive={colors.accent} emissiveIntensity={0.15} {...gm} />
+          <meshStandardMaterial color={colors.accent} emissive={colors.accent} emissiveIntensity={0.15} />
         </mesh>
       </group>
     );

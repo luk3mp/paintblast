@@ -3,23 +3,22 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Vector3 } from "three";
 
 /**
- * CS-style first-person gun — completely fixed in the viewport.
+ * CS-style first-person gun — directly parented to the camera.
  *
- * CRITICAL: We read camera.position and camera.quaternion DIRECTLY,
- * NOT via getWorldPosition / getWorldQuaternion.  Those helper methods
- * derive values from matrixWorld, which is only refreshed during the
- * render pass — meaning it is always ONE FRAME STALE inside useFrame.
- * That one-frame lag is what caused the ghosting/blur artifact.
+ * Instead of computing a world position every frame (which always has
+ * at least a subtle lag), we make the gun group a native Three.js child
+ * of the camera via camera.add().  The gun's position is then in
+ * camera-local space, and Three.js automatically computes the correct
+ * world transform during the render pass — zero lag by definition.
  *
- * Reading the local properties directly is fine because the camera is
- * a child of the scene root (identity transform), so local === world.
+ * React.memo prevents re-renders (the only prop is `team`), so R3F's
+ * reconciler never reparents the gun back.  A useFrame sentinel
+ * re-attaches if anything unexpected happens.
  *
  * Depth technique (gun always on top of world):
  *   1. Sentinel mesh (renderOrder 998) clears depth buffer
  *   2. Gun meshes (renderOrder 999) render on top
  *   3. Normal depthTest so gun parts occlude each other correctly
- *
- * NO animations — gun is 100 % fixed in position.
  */
 const FirstPersonGun = React.memo(
   React.forwardRef(({ team = "Red" }, ref) => {
@@ -28,11 +27,6 @@ const FirstPersonGun = React.memo(
     const depthClearRef = useRef();
 
     const { camera } = useThree();
-
-    // Reusable vectors — allocated once, reused every frame
-    const _right = useMemo(() => new Vector3(), []);
-    const _up = useMemo(() => new Vector3(), []);
-    const _forward = useMemo(() => new Vector3(), []);
 
     // Team colours
     const colors = useMemo(() => {
@@ -56,6 +50,16 @@ const FirstPersonGun = React.memo(
       }
     }, []);
 
+    // Cleanup: remove gun from camera on unmount
+    useEffect(() => {
+      return () => {
+        const gun = gunRootRef.current;
+        if (gun && camera && gun.parent === camera) {
+          camera.remove(gun);
+        }
+      };
+    }, [camera]);
+
     // Expose barrel tip world position for bullet origin
     React.useImperativeHandle(ref, () => ({
       getBarrelTipWorldPosition: () => {
@@ -68,26 +72,19 @@ const FirstPersonGun = React.memo(
       },
     }));
 
-    // ── Per-frame: lock gun to camera ───────────────────────────
+    // ── Per-frame: ensure gun is a child of the camera ──────────
+    // Position [0.28, -0.22, -0.55] is in camera-local space:
+    //   x = right,  y = up,  z = forward (camera looks along -Z)
+    // Three.js computes the world transform during the render pass,
+    // so the gun is guaranteed to be perfectly in sync with the camera.
     useFrame(() => {
-      if (!gunRootRef.current) return;
-
-      // Read DIRECTLY from camera's local properties (always current)
-      const quat = camera.quaternion;
-
-      // Camera basis vectors
-      _right.set(1, 0, 0).applyQuaternion(quat);
-      _up.set(0, 1, 0).applyQuaternion(quat);
-      _forward.set(0, 0, -1).applyQuaternion(quat);
-
-      // Fixed offset in camera-local space
-      gunRootRef.current.position
-        .copy(camera.position) // ← direct, NOT getWorldPosition()
-        .addScaledVector(_right, 0.28)
-        .addScaledVector(_up, -0.22)
-        .addScaledVector(_forward, 0.55);
-
-      gunRootRef.current.quaternion.copy(quat);
+      const gun = gunRootRef.current;
+      if (!gun) return;
+      if (gun.parent !== camera) {
+        camera.add(gun);
+        gun.position.set(0.28, -0.22, -0.55);
+        gun.quaternion.identity();
+      }
     });
 
     return (

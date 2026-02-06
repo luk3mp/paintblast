@@ -1097,29 +1097,11 @@ const Player = forwardRef(
       }
     });
 
-    // Handle camera rotation
-    const [cameraRotation, setCameraRotation] = useState([0, 0, 0]);
-
-    useEffect(() => {
-      const handleMouseMove = (e) => {
-        if (document.pointerLockElement) {
-          const sensitivity = 0.002;
-          const rotX = cameraRotation[0] - e.movementY * sensitivity;
-          const rotY = cameraRotation[1] - e.movementX * sensitivity;
-
-          // Limit vertical rotation
-          const clampedRotX = Math.max(
-            -Math.PI / 2,
-            Math.min(Math.PI / 2, rotX)
-          );
-
-          setCameraRotation([clampedRotX, rotY, 0]);
-        }
-      };
-
-      document.addEventListener("mousemove", handleMouseMove);
-      return () => document.removeEventListener("mousemove", handleMouseMove);
-    }, [cameraRotation]);
+    // Camera rotation is handled by PointerLockControls (in Game.js).
+    // A previous cameraRotation useState + mousemove handler here was
+    // completely redundant — it never applied anything to the camera,
+    // but it DID trigger a full React re-render on every mouse move
+    // (hundreds/sec), which was a major source of the gun ghosting.
 
     // Handle refilling
     useEffect(() => {

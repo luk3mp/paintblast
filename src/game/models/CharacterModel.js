@@ -1,16 +1,9 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Text } from "@react-three/drei";
 
 /**
- * Character model for players in third-person view
- *
- * @param {Object} props
- * @param {string} props.team - Player team ('Red' or 'Blue')
- * @param {string} props.name - Player name to display
- * @param {boolean} props.isLocalPlayer - Whether this is the local player
- * @param {boolean} props.isCarryingFlag - Whether player is carrying a flag
- * @param {string} props.carryingFlagTeam - Team of the flag being carried ('Red' or 'Blue')
- * @param {boolean} props.useLowDetail - Whether to use low detail model for performance
+ * Stylized paintball player character model
+ * Has a blocky/Roblox-inspired style with paintball gear
  */
 const CharacterModel = ({
   team = "Red",
@@ -19,93 +12,302 @@ const CharacterModel = ({
   isCarryingFlag = false,
   carryingFlagTeam = null,
   useLowDetail = false,
+  isShooting = false,
+  isReloading = false,
 }) => {
-  // Define team colors
-  const teamColors = {
-    Red: "#ff3333",
-    Blue: "#3366ff",
-  };
+  // Memoize colors to prevent re-calculations
+  const colors = useMemo(() => {
+    const isRed = team === "Red";
+    return {
+      // Main team color
+      primary: isRed ? "#cc2222" : "#2255cc",
+      // Lighter accent
+      accent: isRed ? "#ff4444" : "#4488ff",
+      // Darker shade for pants/boots
+      dark: isRed ? "#881111" : "#113388",
+      // Vest/armor color
+      vest: isRed ? "#dd3333" : "#3366dd",
+      // Visor tint
+      visor: isRed ? "#ff666680" : "#6699ff80",
+      // Skin tone
+      skin: "#e8c39e",
+      // Equipment colors
+      helmet: "#333333",
+      gun: "#444444",
+      gunAccent: isRed ? "#cc2222" : "#2255cc",
+      boots: "#222222",
+      gloves: "#1a1a1a",
+    };
+  }, [team]);
 
-  // Get the appropriate color based on team
-  const playerColor = teamColors[team] || teamColors.Red;
+  const flagColor = carryingFlagTeam
+    ? carryingFlagTeam === "Red"
+      ? "#ff3333"
+      : "#3366ff"
+    : null;
 
-  // Flag color if carrying a flag
-  const flagColor = carryingFlagTeam ? teamColors[carryingFlagTeam] : null;
+  // Low-detail version for performance
+  if (useLowDetail) {
+    return (
+      <group>
+        <mesh castShadow>
+          <capsuleGeometry args={[0.4, 1.2, 4, 8]} />
+          <meshStandardMaterial color={colors.primary} />
+        </mesh>
+        <Text
+          position={[0, 1.5, 0]}
+          fontSize={0.25}
+          color={colors.accent}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.02}
+          outlineColor="#000000"
+        >
+          {name}
+        </Text>
+      </group>
+    );
+  }
 
   return (
     <group>
-      {/* Player body */}
-      <mesh castShadow receiveShadow>
-        <capsuleGeometry args={[0.5, 1.2, 8, 16]} />
-        <meshStandardMaterial color={playerColor} />
+      {/* === LEGS === */}
+      {/* Left leg */}
+      <mesh castShadow receiveShadow position={[-0.18, -0.55, 0]}>
+        <boxGeometry args={[0.22, 0.65, 0.24]} />
+        <meshStandardMaterial color={colors.dark} />
+      </mesh>
+      {/* Right leg */}
+      <mesh castShadow receiveShadow position={[0.18, -0.55, 0]}>
+        <boxGeometry args={[0.22, 0.65, 0.24]} />
+        <meshStandardMaterial color={colors.dark} />
+      </mesh>
+
+      {/* === BOOTS === */}
+      <mesh castShadow receiveShadow position={[-0.18, -0.92, 0.04]}>
+        <boxGeometry args={[0.26, 0.12, 0.34]} />
+        <meshStandardMaterial color={colors.boots} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[0.18, -0.92, 0.04]}>
+        <boxGeometry args={[0.26, 0.12, 0.34]} />
+        <meshStandardMaterial color={colors.boots} />
+      </mesh>
+
+      {/* === TORSO === */}
+      {/* Main body */}
+      <mesh castShadow receiveShadow position={[0, 0.15, 0]}>
+        <boxGeometry args={[0.55, 0.7, 0.32]} />
+        <meshStandardMaterial color={colors.primary} />
+      </mesh>
+
+      {/* Tactical vest / chest plate */}
+      <mesh castShadow receiveShadow position={[0, 0.18, 0.05]}>
+        <boxGeometry args={[0.5, 0.5, 0.22]} />
+        <meshStandardMaterial color={colors.vest} roughness={0.6} />
+      </mesh>
+
+      {/* Belt */}
+      <mesh castShadow receiveShadow position={[0, -0.17, 0]}>
+        <boxGeometry args={[0.56, 0.08, 0.33]} />
+        <meshStandardMaterial color={colors.boots} />
+      </mesh>
+
+      {/* === ARMS === */}
+      {/* Left arm (upper) */}
+      <mesh
+        castShadow
+        receiveShadow
+        position={[-0.4, 0.22, 0]}
+        rotation={[0, 0, 0.15]}
+      >
+        <boxGeometry args={[0.18, 0.45, 0.2]} />
+        <meshStandardMaterial color={colors.primary} />
+      </mesh>
+      {/* Left forearm */}
+      <mesh
+        castShadow
+        receiveShadow
+        position={[-0.44, -0.1, 0]}
+        rotation={[0, 0, 0.15]}
+      >
+        <boxGeometry args={[0.16, 0.35, 0.18]} />
+        <meshStandardMaterial color={colors.accent} />
+      </mesh>
+      {/* Left glove */}
+      <mesh castShadow receiveShadow position={[-0.46, -0.32, 0]}>
+        <boxGeometry args={[0.14, 0.1, 0.16]} />
+        <meshStandardMaterial color={colors.gloves} />
+      </mesh>
+
+      {/* Right arm (upper) - angled forward to hold gun */}
+      <mesh
+        castShadow
+        receiveShadow
+        position={[0.4, 0.22, -0.05]}
+        rotation={[0.3, 0, -0.15]}
+      >
+        <boxGeometry args={[0.18, 0.45, 0.2]} />
+        <meshStandardMaterial color={colors.primary} />
+      </mesh>
+      {/* Right forearm */}
+      <mesh
+        castShadow
+        receiveShadow
+        position={[0.42, -0.04, -0.18]}
+        rotation={[-0.6, 0, -0.15]}
+      >
+        <boxGeometry args={[0.16, 0.35, 0.18]} />
+        <meshStandardMaterial color={colors.accent} />
+      </mesh>
+      {/* Right glove */}
+      <mesh castShadow receiveShadow position={[0.42, -0.18, -0.32]}>
+        <boxGeometry args={[0.14, 0.1, 0.16]} />
+        <meshStandardMaterial color={colors.gloves} />
+      </mesh>
+
+      {/* === HEAD / HELMET === */}
+      {/* Neck */}
+      <mesh castShadow receiveShadow position={[0, 0.56, 0]}>
+        <cylinderGeometry args={[0.1, 0.12, 0.1, 8]} />
+        <meshStandardMaterial color={colors.skin} />
       </mesh>
 
       {/* Head */}
-      <mesh castShadow receiveShadow position={[0, 1.1, 0]}>
-        <sphereGeometry args={[0.3, 16, 16]} />
-        <meshStandardMaterial color={playerColor} />
+      <mesh castShadow receiveShadow position={[0, 0.76, 0]}>
+        <boxGeometry args={[0.36, 0.36, 0.34]} />
+        <meshStandardMaterial color={colors.skin} />
       </mesh>
 
-      {/* Arms */}
-      <mesh
-        castShadow
-        receiveShadow
-        position={[0.6, 0.3, 0]}
-        rotation={[0, 0, -0.5]}
-      >
-        <capsuleGeometry args={[0.15, 0.7, 8, 16]} />
-        <meshStandardMaterial color={playerColor} />
+      {/* Paintball mask - covers face */}
+      <mesh castShadow receiveShadow position={[0, 0.73, 0.12]}>
+        <boxGeometry args={[0.38, 0.3, 0.12]} />
+        <meshStandardMaterial color={colors.helmet} roughness={0.3} />
       </mesh>
 
-      <mesh
-        castShadow
-        receiveShadow
-        position={[-0.6, 0.3, 0]}
-        rotation={[0, 0, 0.5]}
-      >
-        <capsuleGeometry args={[0.15, 0.7, 8, 16]} />
-        <meshStandardMaterial color={playerColor} />
+      {/* Visor */}
+      <mesh position={[0, 0.78, 0.185]}>
+        <boxGeometry args={[0.32, 0.12, 0.02]} />
+        <meshStandardMaterial
+          color={colors.accent}
+          transparent
+          opacity={0.7}
+          metalness={0.8}
+          roughness={0.1}
+        />
       </mesh>
 
-      {/* Gun */}
-      <mesh
-        castShadow
-        receiveShadow
-        position={[0.6, 0.3, -0.4]}
-        rotation={[0, -0.4, 0]}
-      >
-        <boxGeometry args={[0.1, 0.1, 0.6]} />
-        <meshStandardMaterial color="#333333" />
+      {/* Helmet top */}
+      <mesh castShadow receiveShadow position={[0, 0.9, -0.02]}>
+        <boxGeometry args={[0.38, 0.12, 0.38]} />
+        <meshStandardMaterial color={colors.helmet} roughness={0.4} />
       </mesh>
 
-      {/* Flag if carrying one */}
+      {/* === PAINTBALL MARKER (GUN) === */}
+      <group position={[0.35, 0.0, -0.4]} rotation={[0, 0, 0]}>
+        {/* Main body of marker */}
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[0.1, 0.12, 0.5]} />
+          <meshStandardMaterial
+            color={colors.gun}
+            metalness={0.6}
+            roughness={0.3}
+          />
+        </mesh>
+        {/* Barrel */}
+        <mesh castShadow receiveShadow position={[0, 0.02, -0.35]}>
+          <cylinderGeometry args={[0.03, 0.04, 0.25, 8]} />
+          <meshStandardMaterial
+            color={colors.gun}
+            metalness={0.7}
+            roughness={0.2}
+          />
+        </mesh>
+        {/* Hopper (paint ball container on top) */}
+        <mesh castShadow receiveShadow position={[0, 0.14, 0.05]}>
+          <sphereGeometry args={[0.09, 8, 8]} />
+          <meshStandardMaterial
+            color={colors.gunAccent}
+            metalness={0.3}
+            roughness={0.5}
+          />
+        </mesh>
+        {/* Grip */}
+        <mesh castShadow receiveShadow position={[0, -0.1, 0.08]}>
+          <boxGeometry args={[0.08, 0.12, 0.06]} />
+          <meshStandardMaterial color={colors.gloves} />
+        </mesh>
+        {/* CO2 tank */}
+        <mesh
+          castShadow
+          receiveShadow
+          position={[0, -0.08, 0.2]}
+          rotation={[0.3, 0, 0]}
+        >
+          <cylinderGeometry args={[0.04, 0.04, 0.18, 8]} />
+          <meshStandardMaterial
+            color="#666666"
+            metalness={0.8}
+            roughness={0.2}
+          />
+        </mesh>
+      </group>
+
+      {/* === TEAM SHOULDER PADS === */}
+      <mesh castShadow receiveShadow position={[-0.35, 0.42, 0]}>
+        <boxGeometry args={[0.15, 0.08, 0.26]} />
+        <meshStandardMaterial color={colors.accent} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[0.35, 0.42, 0]}>
+        <boxGeometry args={[0.15, 0.08, 0.26]} />
+        <meshStandardMaterial color={colors.accent} />
+      </mesh>
+
+      {/* === FLAG (if carrying) === */}
       {isCarryingFlag && flagColor && (
-        <group position={[-0.5, 0.8, -0.3]}>
-          <mesh castShadow position={[0, 0.5, 0]}>
-            <boxGeometry args={[0.5, 0.3, 0.05]} />
-            <meshStandardMaterial color={flagColor} />
-          </mesh>
+        <group position={[-0.35, 0.5, -0.2]}>
+          {/* Flagpole */}
           <mesh castShadow>
-            <cylinderGeometry args={[0.03, 0.03, 1, 8]} />
-            <meshStandardMaterial color="#aaaaaa" />
+            <cylinderGeometry args={[0.02, 0.02, 1.2, 6]} />
+            <meshStandardMaterial color="#cccccc" metalness={0.6} />
+          </mesh>
+          {/* Flag cloth */}
+          <mesh castShadow position={[0.2, 0.35, 0]}>
+            <boxGeometry args={[0.4, 0.25, 0.02]} />
+            <meshStandardMaterial color={flagColor} side={2} />
+          </mesh>
+          {/* Flag symbol (small square) */}
+          <mesh position={[0.15, 0.35, 0.015]}>
+            <boxGeometry args={[0.1, 0.1, 0.01]} />
+            <meshStandardMaterial color="#ffffff" />
           </mesh>
         </group>
       )}
 
-      {/* Player name tag */}
+      {/* === NAME TAG === */}
       <Text
-        position={[0, 1.8, 0]}
-        fontSize={0.3}
-        color={team === "Red" ? "#ff3333" : "#3366ff"}
+        position={[0, 1.15, 0]}
+        fontSize={0.22}
+        color={colors.accent}
         anchorX="center"
         anchorY="middle"
-        outlineWidth={0.02}
+        outlineWidth={0.03}
         outlineColor="#000000"
+        font={undefined}
       >
         {name}
       </Text>
+
+      {/* Team indicator dot above name */}
+      <mesh position={[0, 1.3, 0]}>
+        <sphereGeometry args={[0.04, 8, 8]} />
+        <meshStandardMaterial
+          color={colors.accent}
+          emissive={colors.accent}
+          emissiveIntensity={0.5}
+        />
+      </mesh>
     </group>
   );
 };
 
-export default CharacterModel;
+export default React.memo(CharacterModel);

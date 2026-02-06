@@ -314,7 +314,7 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
       );
 
       const removeGameOverListener = addEventListener(
-        EVENTS.GAME_OVER,
+        EVENTS.GAME_END,
         (data) => {
           console.log("Game is over!", data);
           onGameEnd();
@@ -338,24 +338,38 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           }
 
           try {
-            // Store all players in state - IMPORTANT: We must set this even if empty
-            // to ensure the player list is properly updated when players leave
+            // Only update state if player data actually changed to prevent flicker
             setPlayers((prevPlayers) => {
-              // If we somehow got an empty object but had players before,
-              // log this unusual situation
-              if (
-                Object.keys(data).length === 0 &&
-                Object.keys(prevPlayers).length > 0
-              ) {
-                console.warn(
-                  "Received empty player list but had players before"
-                );
+              // Quick check: if same number of keys and positions match, skip update
+              const prevKeys = Object.keys(prevPlayers);
+              const newKeys = Object.keys(data);
+              if (prevKeys.length === newKeys.length) {
+                let changed = false;
+                for (const key of newKeys) {
+                  if (!prevPlayers[key]) { changed = true; break; }
+                  const prev = prevPlayers[key];
+                  const next = data[key];
+                  // Check position, health, team, is_eliminated for meaningful changes
+                  if (
+                    prev.team !== next.team ||
+                    prev.health !== next.health ||
+                    prev.is_eliminated !== next.is_eliminated ||
+                    !prev.position || !next.position ||
+                    Math.abs(prev.position[0] - next.position[0]) > 0.01 ||
+                    Math.abs(prev.position[1] - next.position[1]) > 0.01 ||
+                    Math.abs(prev.position[2] - next.position[2]) > 0.01 ||
+                    !prev.rotation || !next.rotation ||
+                    Math.abs((prev.rotation[0]||0) - (next.rotation[0]||0)) > 0.01 ||
+                    Math.abs((prev.rotation[1]||0) - (next.rotation[1]||0)) > 0.01
+                  ) {
+                    changed = true;
+                    break;
+                  }
+                }
+                if (!changed) return prevPlayers; // Return same reference to skip re-render
               }
               return data;
             });
-
-            // Get our local player ID for later filtering
-            const localPlayerId = socketInstance.id;
 
             // Update debug display with player count
             setDebugInfo((prev) => ({
@@ -363,19 +377,6 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
               playerCount: Object.keys(data).length,
               socketConnected: true,
             }));
-
-            // Log all player IDs for debugging
-            if (Object.keys(data).length > 0) {
-              console.log(`Local player ID: ${localPlayerId}`);
-              Object.keys(data).forEach((id) => {
-                const player = data[id];
-                console.log(
-                  `Player in game: ${player.name}, ID: ${id}, Team: ${player.team}`
-                );
-              });
-            } else {
-              console.log("No players in the received update");
-            }
           } catch (e) {
             console.error("Error processing player data:", e);
           }
@@ -408,7 +409,6 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
 
       // Listen for remote paintballs from other players
       socketInstance.on("paintball", (data) => {
-        console.log("Received remote paintball:", data);
         if (data && data.origin && data.direction) {
           const remotePaintball = {
             id: data.id || `remote-pb-${Date.now()}-${Math.random()}`,
@@ -419,6 +419,60 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           };
           setPaintballs((prev) => [...prev, remotePaintball]);
         }
+      });
+
+      // Direct socket listeners for flag/score events (backup to event system)
+      socketInstance.on("flagCaptured", (data) => {
+        console.log("Flag captured:", data);
+        setFlagState((prev) => {
+          if (data.team === "red") {
+            return { ...prev, redFlagCaptured: true, redFlagCarrier: data.carrier };
+          } else if (data.team === "blue") {
+            return { ...prev, blueFlagCaptured: true, blueFlagCarrier: data.carrier };
+          }
+          return prev;
+        });
+      });
+
+      socketInstance.on("flagScored", (data) => {
+        console.log("Flag scored:", data);
+        setGameStats((prev) => ({
+          ...prev,
+          redScore: data.redScore,
+          blueScore: data.blueScore,
+        }));
+        // Reset flag state
+        setFlagState((prev) => {
+          if (data.team === "red") {
+            return { ...prev, redFlagCaptured: false, redFlagCarrier: null };
+          } else if (data.team === "blue") {
+            return { ...prev, blueFlagCaptured: false, blueFlagCarrier: null };
+          }
+          return prev;
+        });
+        // Reset player carrying flag state
+        setPlayerFlagState((prev) => ({
+          ...prev,
+          isCarryingFlag: false,
+          carryingFlagTeam: null,
+        }));
+      });
+
+      socketInstance.on("flagReturned", (data) => {
+        console.log("Flag returned:", data);
+        setFlagState((prev) => {
+          if (data.team === "red") {
+            return { ...prev, redFlagCaptured: false, redFlagCarrier: null };
+          } else if (data.team === "blue") {
+            return { ...prev, blueFlagCaptured: false, blueFlagCarrier: null };
+          }
+          return prev;
+        });
+      });
+
+      socketInstance.on("gameOver", (data) => {
+        console.log("Game over:", data);
+        onGameEnd();
       });
 
       // Join the game
@@ -492,6 +546,10 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           socketInstance.off("message");
           socketInstance.off("joinSuccess");
           socketInstance.off("paintball");
+          socketInstance.off("flagCaptured");
+          socketInstance.off("flagScored");
+          socketInstance.off("flagReturned");
+          socketInstance.off("gameOver");
         }
       };
     } else {

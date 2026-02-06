@@ -1,14 +1,15 @@
 import React, { useRef, useMemo } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { Vector3 } from "three";
+import { Vector3, Quaternion } from "three";
 
 /**
- * CS-style first-person gun model that follows the camera.
- * Renders in the bottom-right of the viewport.
+ * CS-style first-person gun model that follows the camera each frame.
+ * Positioned in the bottom-right of the viewport like Counter-Strike.
  *
- * The gun is added as a child of the camera so it moves/rotates with the view.
- * A ref to the barrel tip mesh is exposed via `barrelTipRef` so the parent
- * can read its world position for bullet origin.
+ * The gun group is placed in the scene and manually synced to the camera's
+ * world position + rotation every frame via useFrame. A ref to the barrel
+ * tip mesh is exposed via `getBarrelTipWorldPosition()` so the parent can
+ * read its world position for bullet origin.
  */
 const FirstPersonGun = React.forwardRef(
   (
@@ -20,7 +21,7 @@ const FirstPersonGun = React.forwardRef(
     },
     ref
   ) => {
-    const gunGroupRef = useRef();
+    const gunRootRef = useRef(); // Root group that tracks camera
     const hopperRef = useRef();
     const barrelTipRef = useRef();
 
@@ -30,6 +31,14 @@ const FirstPersonGun = React.forwardRef(
     const lastShot = useRef(false);
 
     const { camera } = useThree();
+
+    // Reusable vectors to avoid GC pressure
+    const _offset = useMemo(() => new Vector3(), []);
+    const _camPos = useMemo(() => new Vector3(), []);
+    const _camQuat = useMemo(() => new Quaternion(), []);
+    const _right = useMemo(() => new Vector3(), []);
+    const _up = useMemo(() => new Vector3(), []);
+    const _forward = useMemo(() => new Vector3(), []);
 
     // Team colours
     const colors = useMemo(() => {
@@ -41,7 +50,6 @@ const FirstPersonGun = React.forwardRef(
         gunDark: "#1a1a1a",
         gunBarrel: "#3a3a3a",
         glove: "#111111",
-        skin: "#e8c39e",
         hopperTint: isRed ? "#ff444490" : "#4488ff90",
       };
     }, [team]);
@@ -58,9 +66,18 @@ const FirstPersonGun = React.forwardRef(
       },
     }));
 
-    // Per-frame animation
+    // Per-frame: sync to camera + animate
     useFrame((state, delta) => {
-      if (!gunGroupRef.current) return;
+      if (!gunRootRef.current) return;
+
+      // --- Sync root group to camera world transform ---
+      camera.getWorldPosition(_camPos);
+      camera.getWorldQuaternion(_camQuat);
+
+      // Camera basis vectors
+      _right.set(1, 0, 0).applyQuaternion(_camQuat);
+      _up.set(0, 1, 0).applyQuaternion(_camQuat);
+      _forward.set(0, 0, -1).applyQuaternion(_camQuat);
 
       // --- Recoil trigger ---
       if (isShooting && !lastShot.current) {
@@ -77,26 +94,19 @@ const FirstPersonGun = React.forwardRef(
 
       // Recoil decay
       let recoilZ = 0;
-      let recoilRotX = 0;
       if (recoilAmount.current > 0) {
         recoilZ = 0.03 * recoilAmount.current;
-        recoilRotX = -0.06 * recoilAmount.current;
         recoilAmount.current = Math.max(0, recoilAmount.current - delta * 10);
       }
 
-      // Reload animation offsets
+      // Reload offsets
       let reloadOffsetY = 0;
-      let reloadRotX = 0;
       if (isReloading) {
         const stage = Math.floor(reloadProgress * 3);
         if (stage === 0) {
-          const t = reloadProgress * 3;
-          reloadRotX = t * 0.4;
-          reloadOffsetY = -t * 0.06;
+          reloadOffsetY = -(reloadProgress * 3) * 0.06;
         } else if (stage === 1) {
-          reloadRotX = 0.4;
           reloadOffsetY = -0.06;
-          // Hopper swap animation
           if (hopperRef.current) {
             const t = (reloadProgress - 1 / 3) * 3;
             hopperRef.current.position.y = 0.12 + Math.sin(t * Math.PI) * 0.15;
@@ -104,7 +114,6 @@ const FirstPersonGun = React.forwardRef(
           }
         } else {
           const t = (reloadProgress - 2 / 3) * 3;
-          reloadRotX = 0.4 * (1 - t);
           reloadOffsetY = -0.06 * (1 - t);
           if (hopperRef.current) {
             hopperRef.current.position.set(0, 0.12, 0);
@@ -112,22 +121,24 @@ const FirstPersonGun = React.forwardRef(
         }
       }
 
-      // Final offsets – gun sits bottom-right of screen
-      // Position: right 0.28, down 0.22, forward 0.55 from camera centre
-      gunGroupRef.current.position.set(
-        0.28 + bobX,
-        -0.22 + bobY + reloadOffsetY,
-        -0.55 + recoilZ
-      );
-      gunGroupRef.current.rotation.set(
-        recoilRotX + reloadRotX,
-        0,
-        0
-      );
+      // Compute final world position for the gun root:
+      //   camera pos + right*0.28 + up*(-0.22 + bob + reload) + forward*(0.55 - recoil)
+      const offRight = 0.28 + bobX;
+      const offUp = -0.22 + bobY + reloadOffsetY;
+      const offFwd = 0.55 - recoilZ;
+
+      gunRootRef.current.position
+        .copy(_camPos)
+        .addScaledVector(_right, offRight)
+        .addScaledVector(_up, offUp)
+        .addScaledVector(_forward, offFwd);
+
+      // Match camera rotation
+      gunRootRef.current.quaternion.copy(_camQuat);
     });
 
     return (
-      <group ref={gunGroupRef}>
+      <group ref={gunRootRef} renderOrder={999} frustumCulled={false}>
         {/* === RIGHT HAND / ARM === */}
         <group position={[0.02, -0.06, 0.12]}>
           {/* Forearm sleeve */}
@@ -203,10 +214,11 @@ const FirstPersonGun = React.forwardRef(
           />
         </mesh>
 
-        {/* Barrel tip / muzzle (this is the bullet origin marker) */}
+        {/* Barrel tip / muzzle — this is the bullet origin point */}
         <mesh
           ref={barrelTipRef}
           position={[0, 0.01, -0.46]}
+          frustumCulled={false}
         >
           <cylinderGeometry args={[0.03, 0.035, 0.02, 8]} rotation={[Math.PI / 2, 0, 0]} />
           <meshStandardMaterial color="#555555" roughness={0.3} metalness={0.8} />

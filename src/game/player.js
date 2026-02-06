@@ -6,8 +6,8 @@ import {
   forwardRef,
   useImperativeHandle,
 } from "react";
-import { useFrame, useThree, createPortal } from "@react-three/fiber";
-import { Vector3, Quaternion, Euler, Scene } from "three";
+import { useFrame, useThree } from "@react-three/fiber";
+import { Vector3, Quaternion, Euler } from "three";
 import { RigidBody, CapsuleCollider, useRapier } from "@react-three/rapier";
 import { useKeyboardControls } from "../hooks/useKeyboardControls";
 import CharacterModel from "./models/CharacterModel";
@@ -1489,17 +1489,14 @@ const Player = forwardRef(
       <>
         {isLocalPlayer ? (
           <>
-            {/* First-person gun attached to camera */}
-            {createPortal(
-              <FirstPersonGun
-                ref={fpGunRef}
-                team={team}
-                isShooting={effectiveIsShooting}
-                isReloading={effectiveIsReloading}
-                reloadProgress={effectiveReloadProgress}
-              />,
-              camera
-            )}
+            {/* First-person gun - follows camera each frame */}
+            <FirstPersonGun
+              ref={fpGunRef}
+              team={team}
+              isShooting={effectiveIsShooting}
+              isReloading={effectiveIsReloading}
+              reloadProgress={effectiveReloadProgress}
+            />
 
             {/* Local player with physics */}
             <RigidBody

@@ -14,6 +14,7 @@ const CharacterModel = ({
   useLowDetail = false,
   isShooting = false,
   isReloading = false,
+  isCrouching = false,
 }) => {
   // Memoize colors to prevent re-calculations
   const colors = useMemo(() => {
@@ -46,10 +47,16 @@ const CharacterModel = ({
       : "#3366ff"
     : null;
 
+  // Scale factor to make characters taller / more visible
+  const modelScale = 1.4;
+  // Crouch: lower the model and squash slightly
+  const crouchOffsetY = isCrouching ? -0.35 : 0;
+  const crouchScaleY = isCrouching ? 0.75 : 1;
+
   // Low-detail version for performance
   if (useLowDetail) {
     return (
-      <group>
+      <group scale={[modelScale, modelScale * crouchScaleY, modelScale]} position={[0, crouchOffsetY, 0]}>
         <mesh castShadow>
           <capsuleGeometry args={[0.4, 1.2, 4, 8]} />
           <meshStandardMaterial color={colors.primary} />
@@ -70,7 +77,7 @@ const CharacterModel = ({
   }
 
   return (
-    <group>
+    <group scale={[modelScale, modelScale * crouchScaleY, modelScale]} position={[0, crouchOffsetY, 0]}>
       {/* === LEGS === */}
       {/* Left leg */}
       <mesh castShadow receiveShadow position={[-0.18, -0.55, 0]}>
@@ -203,10 +210,10 @@ const CharacterModel = ({
       </mesh>
 
       {/* === PAINTBALL MARKER (GUN) === */}
-      <group position={[0.35, 0.0, -0.4]} rotation={[0, 0, 0]}>
+      <group position={[0.38, 0.05, -0.35]} rotation={[-0.15, 0, 0]}>
         {/* Main body of marker */}
         <mesh castShadow receiveShadow>
-          <boxGeometry args={[0.1, 0.12, 0.5]} />
+          <boxGeometry args={[0.12, 0.14, 0.6]} />
           <meshStandardMaterial
             color={colors.gun}
             metalness={0.6}
@@ -214,41 +221,65 @@ const CharacterModel = ({
           />
         </mesh>
         {/* Barrel */}
-        <mesh castShadow receiveShadow position={[0, 0.02, -0.35]}>
-          <cylinderGeometry args={[0.03, 0.04, 0.25, 8]} />
+        <mesh castShadow receiveShadow position={[0, 0.02, -0.45]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.035, 0.045, 0.35, 8]} />
           <meshStandardMaterial
             color={colors.gun}
             metalness={0.7}
             roughness={0.2}
           />
         </mesh>
-        {/* Hopper (paint ball container on top) */}
-        <mesh castShadow receiveShadow position={[0, 0.14, 0.05]}>
-          <sphereGeometry args={[0.09, 8, 8]} />
+        {/* Barrel tip / muzzle */}
+        <mesh castShadow receiveShadow position={[0, 0.02, -0.63]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.05, 0.035, 0.06, 8]} />
+          <meshStandardMaterial
+            color="#222222"
+            metalness={0.8}
+            roughness={0.2}
+          />
+        </mesh>
+        {/* Hopper (paint ball container on top) — larger and more visible */}
+        <mesh castShadow receiveShadow position={[0, 0.18, 0.05]}>
+          <sphereGeometry args={[0.12, 10, 10]} />
           <meshStandardMaterial
             color={colors.gunAccent}
             metalness={0.3}
             roughness={0.5}
           />
         </mesh>
+        {/* Hopper neck (connects to body) */}
+        <mesh castShadow receiveShadow position={[0, 0.1, 0.05]}>
+          <cylinderGeometry args={[0.04, 0.04, 0.06, 6]} />
+          <meshStandardMaterial color={colors.gun} />
+        </mesh>
         {/* Grip */}
-        <mesh castShadow receiveShadow position={[0, -0.1, 0.08]}>
-          <boxGeometry args={[0.08, 0.12, 0.06]} />
+        <mesh castShadow receiveShadow position={[0, -0.12, 0.1]}>
+          <boxGeometry args={[0.09, 0.14, 0.07]} />
           <meshStandardMaterial color={colors.gloves} />
         </mesh>
-        {/* CO2 tank */}
+        {/* Trigger guard */}
+        <mesh castShadow receiveShadow position={[0, -0.08, 0.04]}>
+          <boxGeometry args={[0.06, 0.04, 0.12]} />
+          <meshStandardMaterial color={colors.gun} />
+        </mesh>
+        {/* CO2 tank (bigger) */}
         <mesh
           castShadow
           receiveShadow
-          position={[0, -0.08, 0.2]}
+          position={[0, -0.1, 0.24]}
           rotation={[0.3, 0, 0]}
         >
-          <cylinderGeometry args={[0.04, 0.04, 0.18, 8]} />
+          <cylinderGeometry args={[0.05, 0.05, 0.22, 8]} />
           <meshStandardMaterial
             color="#666666"
             metalness={0.8}
             roughness={0.2}
           />
+        </mesh>
+        {/* CO2 tank cap */}
+        <mesh castShadow receiveShadow position={[0, -0.2, 0.28]}>
+          <sphereGeometry args={[0.05, 6, 6]} />
+          <meshStandardMaterial color="#555555" metalness={0.7} roughness={0.3} />
         </mesh>
       </group>
 

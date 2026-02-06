@@ -50,6 +50,7 @@ const Player = forwardRef(
       reloadProgress = 0,
       isShooting = false, // Use this prop from parent instead of local state
       isRespawning = false, // Add isRespawning prop
+      isCrouching = false, // Remote crouch state
     },
     ref
   ) => {
@@ -78,9 +79,21 @@ const Player = forwardRef(
       getRef: () => playerRef.current,
     }));
 
-    // For remote players
+    // For remote players — smooth interpolation
     const [playerPosition, setPlayerPosition] = useState(position);
     const [playerRotation, setPlayerRotation] = useState(rotation);
+    const targetPosition = useRef(
+      Array.isArray(position) ? [...position] : [0, 2, 0]
+    );
+    const currentPosition = useRef(
+      Array.isArray(position) ? [...position] : [0, 2, 0]
+    );
+    const targetRotation = useRef(
+      Array.isArray(rotation) ? [...rotation] : [0, 0, 0]
+    );
+    const currentRotation = useRef(
+      Array.isArray(rotation) ? [...rotation] : [0, 0, 0]
+    );
 
     // Simple keyboard state tracking
     const [keys, setKeys] = useState({
@@ -433,10 +446,42 @@ const Player = forwardRef(
       return false;
     };
 
+    // For remote players: update target position/rotation when props change
+    useEffect(() => {
+      if (!isLocalPlayer && Array.isArray(position)) {
+        targetPosition.current = [...position];
+      }
+    }, [isLocalPlayer, position]);
+
+    useEffect(() => {
+      if (!isLocalPlayer && Array.isArray(rotation)) {
+        targetRotation.current = [...rotation];
+      }
+    }, [isLocalPlayer, rotation]);
+
     // Update useFrame to be more efficient
     useFrame((state, delta) => {
       // Increment frame counter
       frameCount.current++;
+
+      // Remote player smooth interpolation
+      if (!isLocalPlayer && playerRef.current) {
+        const lerpSpeed = Math.min(1, delta * 8); // Smooth at ~8x/s
+        const tp = targetPosition.current;
+        const cp = currentPosition.current;
+        cp[0] += (tp[0] - cp[0]) * lerpSpeed;
+        cp[1] += (tp[1] - cp[1]) * lerpSpeed;
+        cp[2] += (tp[2] - cp[2]) * lerpSpeed;
+
+        const tr = targetRotation.current;
+        const cr = currentRotation.current;
+        cr[0] += (tr[0] - cr[0]) * lerpSpeed;
+        cr[1] += (tr[1] - cr[1]) * lerpSpeed;
+        cr[2] += (tr[2] - cr[2]) * lerpSpeed;
+
+        playerRef.current.position.set(cp[0], cp[1], cp[2]);
+        playerRef.current.rotation.set(0, cr[1], 0); // Only Y-axis for body rotation
+      }
 
       if (isLocalPlayer && playerRef.current) {
         const now = Date.now();
@@ -482,10 +527,11 @@ const Player = forwardRef(
             z: position.z,
           });
 
-          // Send position update to server/other players
+          // Send position update to server/other players (include crouch state)
           onPositionUpdate(
             [position.x, position.y, position.z],
-            [camera.rotation.x, camera.rotation.y, camera.rotation.z]
+            [camera.rotation.x, camera.rotation.y, camera.rotation.z],
+            { isCrouching: keys.crouch && isOnGround.current }
           );
 
           lastPositionUpdateTime.current = now;
@@ -1487,8 +1533,9 @@ const Player = forwardRef(
               isCarryingFlag={isCarryingFlag}
               carryingFlagTeam={carryingFlagTeam}
               useLowDetail={useLowDetail}
-              isShooting={isShooting} // Pass state for potential animations
+              isShooting={isShooting}
               isReloading={isReloading}
+              isCrouching={isCrouching}
             />
           </group>
         )}

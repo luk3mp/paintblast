@@ -647,6 +647,7 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
                 : null
             }
             isEliminated={player.is_eliminated || false}
+            isCrouching={player.isCrouching || false}
           />
         );
       });
@@ -665,10 +666,10 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
     }
   };
 
-  const updatePlayerPosition = (position, rotation) => {
+  const updatePlayerPosition = (position, rotation, extra = {}) => {
     if (socket && isMultiplayer) {
-      // Use the optimized position update function
-      sendPositionUpdate(position, rotation);
+      // Use the optimized position update function (includes crouch state etc.)
+      sendPositionUpdate(position, rotation, extra);
     }
   };
 
@@ -1361,8 +1362,8 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
             isLocalPlayer={true}
             name={playerName}
             team={playerTeam || "Blue"}
-            onPositionUpdate={(position, rotation) => {
-              updatePlayerPosition(position, rotation);
+            onPositionUpdate={(position, rotation, extra) => {
+              updatePlayerPosition(position, rotation, extra);
             }}
             onShoot={isRespawning ? () => {} : handleShoot}
             onReload={(action) => {

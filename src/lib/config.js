@@ -28,7 +28,7 @@ export const LOW_DETAIL_DISTANCE = 50; // Distance at which to switch to low det
 
 // Network optimization
 export const BATCH_UPDATES = true; // Whether to batch position updates
-export const BATCH_UPDATE_INTERVAL = 200; // How often to send batched updates (ms)
+export const BATCH_UPDATE_INTERVAL = 50; // How often to send batched updates (ms) — lower = smoother remote movement
 export const COMPRESSION_ENABLED = true; // Whether to enable network compression
 
 // Graphics settings defaults

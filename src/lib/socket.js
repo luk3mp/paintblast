@@ -436,6 +436,11 @@ function processBatchedUpdates() {
   if (batchedUpdates.position || batchedUpdates.rotation) {
     const updateData = {};
 
+    // Include extra state (crouch, etc.) if present
+    if (batchedUpdates.extra) {
+      Object.assign(updateData, batchedUpdates.extra);
+    }
+
     // Only send position if it changed significantly
     if (
       batchedUpdates.position &&
@@ -563,19 +568,23 @@ export const disconnectSocket = () => {
 
 /**
  * Send a player position update with optimization
+ * @param {Array} position [x, y, z]
+ * @param {Array} rotation [rx, ry, rz]
+ * @param {Object} extra   Additional state like { isCrouching: true }
  */
-export const sendPositionUpdate = (position, rotation) => {
+export const sendPositionUpdate = (position, rotation, extra = {}) => {
   if (!socket || !isMultiplayerMode) return;
 
   if (BATCH_UPDATES) {
     // Store latest values for the next batch
     batchedUpdates.position = position;
     batchedUpdates.rotation = rotation;
+    batchedUpdates.extra = extra;
   } else {
     // Create throttled function for direct updates
     if (!sendPositionUpdate.throttled) {
-      sendPositionUpdate.throttled = throttle((pos, rot) => {
-        const updateData = {};
+      sendPositionUpdate.throttled = throttle((pos, rot, ext) => {
+        const updateData = { ...ext };
 
         if (
           pos &&
@@ -603,7 +612,7 @@ export const sendPositionUpdate = (position, rotation) => {
       }, POSITION_UPDATE_INTERVAL);
     }
 
-    sendPositionUpdate.throttled(position, rotation);
+    sendPositionUpdate.throttled(position, rotation, extra);
   }
 };
 

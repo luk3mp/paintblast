@@ -406,6 +406,21 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
         }
       );
 
+      // Listen for remote paintballs from other players
+      socketInstance.on("paintball", (data) => {
+        console.log("Received remote paintball:", data);
+        if (data && data.origin && data.direction) {
+          const remotePaintball = {
+            id: data.id || `remote-pb-${Date.now()}-${Math.random()}`,
+            position: data.origin,
+            direction: data.direction,
+            color: data.color || "#ff4500",
+            isRemote: true,
+          };
+          setPaintballs((prev) => [...prev, remotePaintball]);
+        }
+      });
+
       // Join the game
       const assignedTeam = Math.random() < 0.5 ? "Red" : "Blue"; // Default team, server will override
       console.log("Requesting team:", assignedTeam);
@@ -476,6 +491,7 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
           socketInstance.off("players");
           socketInstance.off("message");
           socketInstance.off("joinSuccess");
+          socketInstance.off("paintball");
         }
       };
     } else {
@@ -957,10 +973,11 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
     let position;
 
     // IMPORTANT: Make sure Red team spawns at North (-z) and Blue team spawns at South (+z)
+    // Positions must match server and map castle positions at z=±120
     if (normalizedTeam.toLowerCase() === "red") {
-      position = [offsetX, 2, -110]; // North (Red team)
+      position = [offsetX, 2, -120]; // North (Red team)
     } else {
-      position = [offsetX, 2, 110]; // South (Blue team)
+      position = [offsetX, 2, 120]; // South (Blue team)
     }
 
     // Cache it permanently

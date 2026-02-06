@@ -1110,181 +1110,127 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
     }
   };
 
-  // --- Add Event Listeners in Multiplayer Setup useEffect ---
+  // --- Additional multiplayer event listeners (health, respawn, kill feed, stats) ---
   useEffect(() => {
-    let socketInstance = null;
-    // Define cleanup functions array
+    if (!isMultiplayer || !socket) return;
+
     const cleanupFunctions = [];
 
-    if (isMultiplayer) {
-      // ... existing multiplayer connection logic ...
-      const {
-        getSocket,
-        connectSocket,
-        isConnected,
-      } = require("../lib/socket");
-      socketInstance = getSocket();
-      if (!socketInstance || !isConnected()) {
-        socketInstance = connectSocket({ multiplayer: true });
-      }
+    const handleHealthUpdate = (data) => {
+      console.log("Received health update:", data);
+      setGameStats((prev) => ({
+        ...prev,
+        health: data.health,
+      }));
+    };
+    socket.on("healthUpdate", handleHealthUpdate);
+    cleanupFunctions.push(() =>
+      socket.off("healthUpdate", handleHealthUpdate)
+    );
 
-      // --- Add New Event Listeners ---
+    const handleStartRespawn = (data) => {
+      console.log("Received start respawn timer:", data);
+      setIsRespawning(true);
+      setRespawnCountdown(data.duration);
+      setGameStats((prev) => ({ ...prev, health: 0 }));
 
-      const handleHealthUpdate = (data) => {
-        console.log("Received health update:", data);
-        setGameStats((prev) => ({
-          ...prev,
-          health: data.health,
-        }));
-      };
-      socketInstance.on("healthUpdate", handleHealthUpdate);
-      cleanupFunctions.push(() =>
-        socketInstance.off("healthUpdate", handleHealthUpdate)
-      );
-
-      const handleStartRespawn = (data) => {
-        console.log("Received start respawn timer:", data);
-        setIsRespawning(true);
-        setRespawnCountdown(data.duration);
-        setGameStats((prev) => ({ ...prev, health: 0 })); // Ensure health shows 0
-
-        // Clear previous interval if any
-        if (respawnIntervalRef.current) {
-          clearInterval(respawnIntervalRef.current);
-        }
-
-        // Start client-side countdown interval
-        respawnIntervalRef.current = setInterval(() => {
-          setRespawnCountdown((prev) => {
-            if (prev <= 1) {
-              clearInterval(respawnIntervalRef.current);
-              respawnIntervalRef.current = null;
-              // No need to set isRespawning false here, wait for playerRespawned event
-              return 0;
-            }
-            return prev - 1;
-          });
-        }, 1000);
-        cleanupFunctions.push(() => {
-          if (respawnIntervalRef.current)
-            clearInterval(respawnIntervalRef.current);
-        });
-      };
-      socketInstance.on("startRespawnTimer", handleStartRespawn);
-      cleanupFunctions.push(() =>
-        socketInstance.off("startRespawnTimer", handleStartRespawn)
-      );
-
-      const handlePlayerRespawned = (data) => {
-        console.log("Received player respawned:", data);
-        setIsRespawning(false);
-        setLastKiller(null); // Clear killer info
-        if (respawnIntervalRef.current) {
-          clearInterval(respawnIntervalRef.current);
-          respawnIntervalRef.current = null;
-        }
-        setRespawnCountdown(0);
-
-        // Reset health and potentially update position directly
-        setGameStats((prev) => ({
-          ...prev,
-          health: data.health || 100, // Use health from server or default
-        }));
-
-        // Reset player position using the ref
-        if (
-          playerRef.current &&
-          data.position &&
-          playerRef.current.setTranslation
-        ) {
-          console.log("Setting player position on respawn:", data.position);
-          playerRef.current.setTranslation(
-            { x: data.position[0], y: data.position[1], z: data.position[2] },
-            true // Wake up rigid body
-          );
-        }
-        // Re-enable controls (PointerLockControls usually re-enables on click)
-        // You might need specific logic if you manually disable player input elsewhere
-      };
-      socketInstance.on("playerRespawned", handlePlayerRespawned);
-      cleanupFunctions.push(() =>
-        socketInstance.off("playerRespawned", handlePlayerRespawned)
-      );
-
-      const handlePlayerKilled = (data) => {
-        console.log("Received player killed:", data);
-        const killerName = data.killer?.name || "Unknown";
-        const victimName = data.victim?.name || "Unknown";
-        const message = `${killerName} eliminated ${victimName}`;
-        const messageId = Date.now(); // Simple unique enough ID for React key
-
-        setKillFeed((prev) => {
-          const newFeed = [...prev, { id: messageId, text: message }];
-          // Limit the number of messages
-          if (newFeed.length > MAX_KILL_FEED_MESSAGES) {
-            return newFeed.slice(newFeed.length - MAX_KILL_FEED_MESSAGES);
-          }
-          return newFeed;
-        });
-
-        // If the local player was the victim, store killer info
-        const localPlayerId = getSocket()?.id; // Get local socket ID safely
-        if (localPlayerId && data.victim?.id === localPlayerId) {
-          setLastKiller(killerName);
-        }
-      };
-      socketInstance.on("playerKilled", handlePlayerKilled);
-      cleanupFunctions.push(() =>
-        socketInstance.off("playerKilled", handlePlayerKilled)
-      );
-
-      const handleStatsUpdate = (data) => {
-        console.log("Received stats update:", data);
-        setGameStats((prev) => ({
-          ...prev,
-          ...data, // Directly merge received stats (kills, deaths, score)
-        }));
-      };
-      socketInstance.on("statsUpdate", handleStatsUpdate);
-      cleanupFunctions.push(() =>
-        socketInstance.off("statsUpdate", handleStatsUpdate)
-      );
-
-      // --- End New Event Listeners ---
-
-      // ... existing event listeners (players, message, joinSuccess, flags etc.) ...
-      const removePlayerListener = addEventListener(
-        EVENTS.PLAYERS_UPDATE,
-        (data) => {
-          setPlayers(data);
-        }
-      );
-      cleanupFunctions.push(removePlayerListener);
-      // Add other existing listeners to cleanupFunctions...
-
-      // Join game logic...
-      // Commenting out or removing the potentially problematic/duplicate join emit
-      // socketInstance.emit("join", { name: playerName, team: assignedTeam });
-      // ...
-    } else {
-      // ... existing single player setup ...
-    }
-
-    // Set the socket state
-    setSocket(socketInstance);
-
-    // Cleanup function
-    return () => {
-      console.log("Cleaning up Game component listeners...");
-      cleanupFunctions.forEach((cleanup) => cleanup());
-      // Clear respawn interval on unmount
       if (respawnIntervalRef.current) {
         clearInterval(respawnIntervalRef.current);
       }
-      // We don't disconnect socket here anymore if managed globally
+
+      respawnIntervalRef.current = setInterval(() => {
+        setRespawnCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(respawnIntervalRef.current);
+            respawnIntervalRef.current = null;
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     };
-    // Ensure dependencies cover new state used in handlers if needed
-  }, [playerName, onGameEnd, isMultiplayer]); // Add isShooting, playerReloadState if they affect listeners
+    socket.on("startRespawnTimer", handleStartRespawn);
+    cleanupFunctions.push(() =>
+      socket.off("startRespawnTimer", handleStartRespawn)
+    );
+
+    const handlePlayerRespawned = (data) => {
+      console.log("Received player respawned:", data);
+      setIsRespawning(false);
+      setLastKiller(null);
+      if (respawnIntervalRef.current) {
+        clearInterval(respawnIntervalRef.current);
+        respawnIntervalRef.current = null;
+      }
+      setRespawnCountdown(0);
+
+      setGameStats((prev) => ({
+        ...prev,
+        health: data.health || 100,
+      }));
+
+      if (
+        playerRef.current &&
+        data.position &&
+        playerRef.current.setTranslation
+      ) {
+        console.log("Setting player position on respawn:", data.position);
+        playerRef.current.setTranslation(
+          { x: data.position[0], y: data.position[1], z: data.position[2] },
+          true
+        );
+      }
+    };
+    socket.on("playerRespawned", handlePlayerRespawned);
+    cleanupFunctions.push(() =>
+      socket.off("playerRespawned", handlePlayerRespawned)
+    );
+
+    const handlePlayerKilled = (data) => {
+      console.log("Received player killed:", data);
+      const killerName = data.killer?.name || "Unknown";
+      const victimName = data.victim?.name || "Unknown";
+      const message = `${killerName} eliminated ${victimName}`;
+      const messageId = Date.now();
+
+      setKillFeed((prev) => {
+        const newFeed = [...prev, { id: messageId, text: message }];
+        if (newFeed.length > MAX_KILL_FEED_MESSAGES) {
+          return newFeed.slice(newFeed.length - MAX_KILL_FEED_MESSAGES);
+        }
+        return newFeed;
+      });
+
+      const localPlayerId = getSocket()?.id;
+      if (localPlayerId && data.victim?.id === localPlayerId) {
+        setLastKiller(killerName);
+      }
+    };
+    socket.on("playerKilled", handlePlayerKilled);
+    cleanupFunctions.push(() =>
+      socket.off("playerKilled", handlePlayerKilled)
+    );
+
+    const handleStatsUpdate = (data) => {
+      console.log("Received stats update:", data);
+      setGameStats((prev) => ({
+        ...prev,
+        ...data,
+      }));
+    };
+    socket.on("statsUpdate", handleStatsUpdate);
+    cleanupFunctions.push(() =>
+      socket.off("statsUpdate", handleStatsUpdate)
+    );
+
+    return () => {
+      console.log("Cleaning up additional multiplayer listeners...");
+      cleanupFunctions.forEach((cleanup) => cleanup());
+      if (respawnIntervalRef.current) {
+        clearInterval(respawnIntervalRef.current);
+      }
+    };
+  }, [isMultiplayer, socket]); // Depends on socket being set by the primary useEffect
 
   return (
     <div className={styles.gameContainer}>
@@ -1343,7 +1289,7 @@ export default function Game({ playerName, isMultiplayer = false, onGameEnd }) {
         onCreated={({ gl }) => {
           gl.setClearColor("#87CEEB"); // Set sky color for better performance than Sky component
         }}
-        frameloop="demand" // Only render when needed for better performance
+        frameloop="always" // Must be "always" for real-time multiplayer rendering
         onBeforeRender={() => {
           // Update FPS tracking on each frame
           updateFps();

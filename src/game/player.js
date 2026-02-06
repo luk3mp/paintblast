@@ -466,21 +466,33 @@ const Player = forwardRef(
 
       // Remote player smooth interpolation
       if (!isLocalPlayer && playerRef.current) {
-        const lerpSpeed = Math.min(1, delta * 8); // Smooth at ~8x/s
+        const lerpSpeed = Math.min(1, delta * 12); // Smooth interpolation
+
+        // --- Position lerp ---
         const tp = targetPosition.current;
         const cp = currentPosition.current;
         cp[0] += (tp[0] - cp[0]) * lerpSpeed;
         cp[1] += (tp[1] - cp[1]) * lerpSpeed;
         cp[2] += (tp[2] - cp[2]) * lerpSpeed;
 
-        const tr = targetRotation.current;
-        const cr = currentRotation.current;
-        cr[0] += (tr[0] - cr[0]) * lerpSpeed;
-        cr[1] += (tr[1] - cr[1]) * lerpSpeed;
-        cr[2] += (tr[2] - cr[2]) * lerpSpeed;
+        // --- Rotation lerp (with shortest-path wrapping) ---
+        // The camera rotation.y is the yaw the player is looking.
+        // The character model faces +Z by default, but camera faces -Z,
+        // so we add Math.PI to flip the model to face the camera direction.
+        const targetYaw = targetRotation.current[1] + Math.PI;
+        let currentYaw = currentRotation.current[1];
+
+        // Compute shortest angular difference (handles wrapping around ±π)
+        let diff = targetYaw - currentYaw;
+        // Normalize to [-π, π]
+        diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI;
+        if (diff < -Math.PI) diff += 2 * Math.PI;
+
+        currentYaw += diff * lerpSpeed;
+        currentRotation.current[1] = currentYaw;
 
         playerRef.current.position.set(cp[0], cp[1], cp[2]);
-        playerRef.current.rotation.set(0, cr[1], 0); // Only Y-axis for body rotation
+        playerRef.current.rotation.set(0, currentYaw, 0);
       }
 
       if (isLocalPlayer && playerRef.current) {

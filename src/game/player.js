@@ -538,8 +538,9 @@ const Player = forwardRef(
           });
 
           // Compute yaw from camera's actual forward vector (Euler-order independent)
+          // Camera faces -Z, model faces +Z, so add PI to flip 180°
           const fwd = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-          const yaw = Math.atan2(fwd.x, fwd.z);
+          const yaw = Math.atan2(fwd.x, fwd.z) + Math.PI;
 
           // Send position update to server/other players (include crouch state)
           onPositionUpdate(

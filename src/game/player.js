@@ -1363,7 +1363,7 @@ const Player = forwardRef(
       }
 
       if (onShoot) {
-        // --- Calculate Trajectory (Center Screen) ---
+        // --- Calculate Trajectory (Center Screen / Crosshair) ---
         const directionVector = new Vector3();
         camera.getWorldDirection(directionVector); // Get camera's forward direction
         directionVector.normalize();
@@ -1372,35 +1372,30 @@ const Player = forwardRef(
           directionVector.y,
           directionVector.z,
         ];
-        console.log("Shot direction (Camera Dir):", direction);
 
-        // --- Calculate Visual Origin (Right Shoulder) ---
-        const originVector = new Vector3();
-        camera.getWorldPosition(originVector); // Start at camera position
-
-        // Get camera's right and down vectors from its world matrix
-        const right = new Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
-        const down = new Vector3()
-          .setFromMatrixColumn(camera.matrixWorld, 1)
-          .negate(); // Up is column 1, so negate for down
-
-        // Define shoulder offset relative to camera center
-        const shoulderOffsetRight = 0.3; // How far to the right
-        const shoulderOffsetDown = 0.1; // How far down
-        const shoulderOffsetForward = 0.1; // Slightly in front of camera to avoid clipping
-
-        // Apply offsets
-        originVector.addScaledVector(right, shoulderOffsetRight);
-        originVector.addScaledVector(down, shoulderOffsetDown);
-        originVector.addScaledVector(directionVector, shoulderOffsetForward); // Offset along the view direction
+        // --- Calculate Origin ---
+        // Use the rigid body position (feet) + a gun-height offset (~1.2m)
+        // instead of camera.getWorldPosition() which is at eye level (1.7m).
+        // This makes bullets appear to come from chest/gun level for remote viewers.
+        // Spawn slightly forward (0.5m) so the ball doesn't clip the player model.
+        let originVector;
+        if (playerRef.current && typeof playerRef.current.translation === "function") {
+          const bodyPos = playerRef.current.translation();
+          const gunHeight = keys.crouch && isOnGround.current ? 0.7 : 1.2;
+          originVector = new Vector3(bodyPos.x, bodyPos.y + gunHeight, bodyPos.z);
+        } else {
+          // Fallback to camera position lowered slightly
+          originVector = new Vector3();
+          camera.getWorldPosition(originVector);
+          originVector.y -= 0.5;
+        }
+        // Push the origin forward along the aim direction to avoid self-clipping
+        originVector.addScaledVector(directionVector, 0.5);
 
         const visualOrigin = [originVector.x, originVector.y, originVector.z];
-        console.log("Visual shot origin (Shoulder):", visualOrigin);
 
         try {
-          // Pass the calculated VISUAL origin and the CENTERED direction
           onShoot(visualOrigin, direction);
-          console.log("Shot fired successfully!");
           return true;
         } catch (error) {
           console.error("Error during shot:", error);

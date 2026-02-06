@@ -114,10 +114,6 @@ const Player = forwardRef(
     const isOnGround = useRef(true);
     const jumpCooldown = useRef(false);
 
-    // Add these refs at the top of your component
-    const bobPhase = useRef(0);
-    const lastPosition = useRef(new Vector3());
-
     // Add these refs to track jump state
     const jumpCount = useRef(0);
     const lastJumpTime = useRef(Date.now()); // Initialize to current time so spawn check works
@@ -742,25 +738,9 @@ const Player = forwardRef(
           );
         }
 
-        // Add camera bob when moving
-        if (movement.length() > 0 && isOnGround.current) {
-          // Calculate distance moved since last frame
-          const currentPos = new Vector3(position.x, position.y, position.z);
-          const distanceMoved = lastPosition.current.distanceTo(currentPos);
-
-          // Update bob phase based on movement
-          bobPhase.current += distanceMoved * 2.5;
-
-          // Apply subtle vertical bob to camera
-          const bobAmount = keys.crouch ? 0.02 : 0.05;
-          const bobOffset = Math.sin(bobPhase.current) * bobAmount;
-
-          // Apply to camera height
-          camera.position.y += bobOffset;
-        }
-
-        // Update last position
-        lastPosition.current.set(position.x, position.y, position.z);
+        // Camera bob removed — it caused visible ghosting/blur on the
+        // first-person gun model because the gun reads camera position one
+        // useFrame tick later, producing a double-image artifact.
 
         // Handle replenishing - moved from separate useFrame to be more efficient
         if (isReplenishing) {
